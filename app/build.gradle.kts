@@ -55,5 +55,5 @@ dependencies {
 
     // Same engine family as PyMuPDF on desktop -> identical rendering,
     // search, annotations and save behaviour. (AGPL — see README.)
-    implementation("com.artifex.mupdf:fitz:1.24.10")
+    implementation("com.artifex.mupdf:fitz:1.24.+")
 }
