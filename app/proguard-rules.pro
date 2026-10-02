@@ -1,0 +1,2 @@
+-keep class com.artifex.mupdf.fitz.** { *; }
+-keepclasseswithmembernames class * { native <methods>; }

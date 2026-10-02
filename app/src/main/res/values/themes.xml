@@ -1,0 +1,10 @@
+<resources>
+    <style name="Theme.PteronPDF.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">#F4F7FD</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_logo_fg</item>
+        <item name="postSplashScreenTheme">@style/Theme.PteronPDF</item>
+    </style>
+    <style name="Theme.PteronPDF" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@android:color/white</item>
+    </style>
+</resources>
