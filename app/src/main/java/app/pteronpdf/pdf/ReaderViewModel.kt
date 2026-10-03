@@ -59,8 +59,13 @@ class ReaderViewModel(app: Application, val uri: Uri) : AndroidViewModel(app) {
     var searchedOnce by mutableStateOf(false); private set
     private var searchJob: Job? = null
 
-    // ── bitmap cache: capped at 1/8 of the heap, evicts least-recently-used ──
-    private val cache = object : LruCache<String, Bitmap>((Runtime.getRuntime().maxMemory() / 8).toInt().coerceAtLeast(16 shl 20)) {
+    // ── bitmap cache: sized from the device's own heap limit (works on 512 MB phones and flagships) ──
+    private val memClass = (app.getSystemService(android.content.Context.ACTIVITY_SERVICE) as android.app.ActivityManager).memoryClass
+    /** Max render width relative to screen width. Smaller on low-memory phones so one zoomed page can't exhaust the heap. */
+    val renderCapFactor = when { memClass <= 96 -> 1.4f; memClass <= 192 -> 2f; else -> 2.5f }
+    private val cache = object : LruCache<String, Bitmap>(
+        (Runtime.getRuntime().maxMemory() / 8).toInt().coerceIn(6 shl 20, 64 shl 20)
+    ) {
         override fun sizeOf(key: String, value: Bitmap) = value.allocationByteCount
     }
     private fun key(i: Int, w: Int, v: Int) = "$i:$w:$v"
