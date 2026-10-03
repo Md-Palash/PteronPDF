@@ -59,7 +59,10 @@ android {
 
     packaging {
         resources.excludes += setOf("/META-INF/{AL2.0,LGPL2.1}", "/META-INF/*.version", "/META-INF/*.kotlin_module", "DebugProbesKt.bin", "kotlin-tooling-metadata.json", "/kotlin/**")
-        jniLibs.useLegacyPackaging = false   // keep .so uncompressed & mmap'd: smaller install, faster start
+        // Compress native libs inside the APK: the APK file is roughly half the size, and it is also the only
+        // mode that is safe on Android 5/6 (those can't run libs straight out of the APK).
+        // Trade-off: the phone keeps an extracted copy after install. Set to false to favour on-device space over APK size.
+        jniLibs.useLegacyPackaging = true
     }
 }
 
