@@ -14,6 +14,8 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "1.0.0"
+        // UI is English only: drop the translated strings that Material/AndroidX bring along.
+        resourceConfigurations += listOf("en")
     }
 
     buildTypes {
@@ -52,8 +54,6 @@ android {
         }
     }
 
-    // UI is English only: drop the translated strings that Material/AndroidX bring along.
-    androidResources { localeFilters += listOf("en") }
     // Don't embed the dependency list (only useful for Play's own tooling).
     dependenciesInfo { includeInApk = false; includeInBundle = false }
 
