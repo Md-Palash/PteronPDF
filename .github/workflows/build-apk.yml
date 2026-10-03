@@ -43,6 +43,16 @@ jobs:
             [ -f "$f" ] && echo "| $(basename "$f") | $(du -h "$f" | cut -f1) |" >> "$GITHUB_STEP_SUMMARY"
           done
 
+      - name: Show what is inside the benchmark APK
+        run: |
+          f=$(ls app/build/outputs/apk/benchmark/*.apk | head -1)
+          {
+            echo "### Largest files inside $(basename "$f") (compressed size, bytes)"
+            echo '```'
+            unzip -lv "$f" | awk 'NR>3 && $1 ~ /^[0-9]+$/ {print $3, $2, $8}' | sort -nr | head -15
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - uses: actions/upload-artifact@v4
         with:
           name: PteronPDF-debug
