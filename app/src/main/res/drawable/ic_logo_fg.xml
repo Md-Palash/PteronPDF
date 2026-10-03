@@ -1,6 +1,12 @@
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
-    <path android:fillColor="#EEFFFFFF" android:pathData="M36,30h26l10,10v38h-36z"/>
-    <path android:fillColor="#FF1E3F73" android:pathData="M62,30l10,10h-10z"/>
-    <path android:strokeColor="#FF1E3F73" android:strokeWidth="3" android:strokeLineCap="round" android:pathData="M42,56h22M42,64h22M42,72h14"/>
+    <!-- Logo glyph, scaled to sit inside the 66dp adaptive-icon safe zone -->
+    <group android:translateX="16.2" android:translateY="23.6" android:scaleX="0.62" android:scaleY="0.62">
+        <path android:fillColor="#172033" android:pathData="M26,82L26,38L48,22L48,66Z"/>
+        <path android:fillColor="#00BD8E" android:pathData="M48,22L84,26L62,70L48,66Z"/>
+        <path android:fillColor="#1478FF" android:pathData="M48,66L62,70L88,48L76,86Z"/>
+        <path android:strokeColor="#F2FFFFFF" android:strokeWidth="2.2" android:strokeLineCap="round" android:pathData="M48,22L48,66"/>
+        <path android:fillColor="#00B88A" android:pathData="M84,26C90,20 94,14 96,10C92,18 86,24 82,27Z"/>
+        <path android:fillColor="#4D0052CC" android:pathData="M62,70L76,86L70,88L56,76Z"/>
+    </group>
 </vector>
