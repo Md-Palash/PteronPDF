@@ -1,4 +1,4 @@
-name: Build APK
+name: Build APKs
 
 on:
   push:
@@ -11,21 +11,44 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-java@v4
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 17
+          java-version: '17'
 
-      # Installs Gradle itself, so no gradle-wrapper.jar needs to be committed.
-      - uses: gradle/actions/setup-gradle@v4
+      # The runner already has the Android SDK. Just accept licenses so the
+      # Android Gradle plugin can download the platform/build-tools it needs.
+      - name: Accept Android SDK licenses
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+
+      # AGP 8.7.3 needs Gradle 8.9+ and does NOT work with Gradle 9.
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: 8.10.2
+          gradle-version: '8.10.2'
 
       - name: Build debug APK
         run: gradle :app:assembleDebug --stacktrace
 
+      - name: Build benchmark APK (minified, real size)
+        run: gradle :app:assembleBenchmark --stacktrace
+
+      - name: Report APK sizes
+        run: |
+          echo "### APK sizes" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Variant | Size |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          for f in app/build/outputs/apk/debug/*.apk app/build/outputs/apk/benchmark/*.apk; do
+            [ -f "$f" ] && echo "| $(basename "$f") | $(du -h "$f" | cut -f1) |" >> "$GITHUB_STEP_SUMMARY"
+          done
+
       - uses: actions/upload-artifact@v4
         with:
-          name: PteronPDF-debug-apk
+          name: PteronPDF-debug
           path: app/build/outputs/apk/debug/*.apk
-          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PteronPDF-benchmark
+          path: app/build/outputs/apk/benchmark/*.apk
