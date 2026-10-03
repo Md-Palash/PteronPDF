@@ -10,13 +10,10 @@ android {
 
     defaultConfig {
         applicationId = "app.pteronpdf"
-        minSdk = 26
+        minSdk = 21
         targetSdk = 35
         versionCode = 1
         versionName = "1.0.0"
-        // arm64 only: MuPDF's native library is the biggest thing in the APK and ships once per ABI.
-        // (Every phone from the last ~8 years is arm64. Add "armeabi-v7a" back only if you need very old 32-bit phones.)
-        ndk { abiFilters += listOf("arm64-v8a") }
     }
 
     buildTypes {
@@ -41,6 +38,19 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
     buildFeatures { compose = true }
+
+    // One small APK per CPU type instead of one big APK holding all of them. A phone only needs its own,
+    // so every device is supported and nobody downloads native code they can't run.
+    //   arm64-v8a   = nearly all phones since ~2016      armeabi-v7a = older / low-end 32-bit phones
+    //   x86_64, x86 = Chromebooks, emulators, a few tablets
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
+            isUniversalApk = false
+        }
+    }
 
     // UI is English only: drop the translated strings that Material/AndroidX bring along.
     androidResources { localeFilters += listOf("en") }
