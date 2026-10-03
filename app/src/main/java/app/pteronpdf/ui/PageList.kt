@@ -32,7 +32,6 @@ import app.pteronpdf.theme.LocalPteron
 import kotlinx.coroutines.launch
 
 const val MAX_ZOOM = 4f
-private const val MAX_RENDER_WIDTH_FACTOR = 2.5f   // render cap vs. screen width — keeps per-page bitmaps bounded
 
 @Composable
 fun PageList(
@@ -140,7 +139,7 @@ private fun PageItem(vm: ReaderViewModel, engine: PdfEngine, index: Int, pageW: 
     val info = engine.pages[index]
     val hPx = (pageW * info.aspect).toInt()
     // Render width: bucketed (cache hits) and capped (bounded memory).
-    val cap = (viewW * MAX_RENDER_WIDTH_FACTOR).toInt()
+    val cap = (viewW * vm.renderCapFactor).toInt()
     val renderW = (((pageW.coerceAtMost(cap) + 63) / 64) * 64).coerceAtLeast(64)
     val version = vm.pageVersion(index)
 
