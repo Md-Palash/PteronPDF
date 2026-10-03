@@ -14,9 +14,9 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "1.0.0"
-        // MuPDF ships native libs per ABI. Keep only what real phones use
-        // (drops ~2/3 of the native payload from a universal APK).
-        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
+        // arm64 only: MuPDF's native library is the biggest thing in the APK and ships once per ABI.
+        // (Every phone from the last ~8 years is arm64. Add "armeabi-v7a" back only if you need very old 32-bit phones.)
+        ndk { abiFilters += listOf("arm64-v8a") }
     }
 
     buildTypes {
@@ -42,8 +42,13 @@ android {
     kotlinOptions { jvmTarget = "17" }
     buildFeatures { compose = true }
 
+    // UI is English only: drop the translated strings that Material/AndroidX bring along.
+    androidResources { localeFilters += listOf("en") }
+    // Don't embed the dependency list (only useful for Play's own tooling).
+    dependenciesInfo { includeInApk = false; includeInBundle = false }
+
     packaging {
-        resources.excludes += setOf("/META-INF/{AL2.0,LGPL2.1}", "DebugProbesKt.bin")
+        resources.excludes += setOf("/META-INF/{AL2.0,LGPL2.1}", "/META-INF/*.version", "/META-INF/*.kotlin_module", "DebugProbesKt.bin", "kotlin-tooling-metadata.json", "/kotlin/**")
         jniLibs.useLegacyPackaging = false   // keep .so uncompressed & mmap'd: smaller install, faster start
     }
 }
