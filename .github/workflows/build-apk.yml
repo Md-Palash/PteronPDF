@@ -17,6 +17,16 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      # Fonts: trims Google fonts to Latin and bundles Regular/Bold only (~25 KB each).
+      # Fonts already committed under app/src/main/res/font are kept; a failed download never fails the build.
+      - name: Fetch fonts
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          pip install fonttools
+          python3 tools/fetch_fonts.py
+
       # The runner already has the Android SDK. Just accept licenses so the
       # Android Gradle plugin can download the platform/build-tools it needs.
       - name: Accept Android SDK licenses
