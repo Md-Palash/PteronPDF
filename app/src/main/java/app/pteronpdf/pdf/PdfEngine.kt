@@ -2,17 +2,19 @@ package app.pteronpdf.pdf
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.PointF
 import android.graphics.RectF
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import com.artifex.mupdf.fitz.Matrix
-import com.artifex.mupdf.fitz.Point
-import com.artifex.mupdf.fitz.Rect
-import com.artifex.mupdf.fitz.SeekableInputStream
-import com.artifex.mupdf.fitz.android.AndroidDrawDevice
 import com.artifex.mupdf.fitz.PDFAnnotation
 import com.artifex.mupdf.fitz.PDFDocument
 import com.artifex.mupdf.fitz.PDFPage
+import com.artifex.mupdf.fitz.Point
+import com.artifex.mupdf.fitz.Quad
+import com.artifex.mupdf.fitz.Rect
+import com.artifex.mupdf.fitz.SeekableInputStream
+import com.artifex.mupdf.fitz.android.AndroidDrawDevice
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.withContext
@@ -39,7 +41,13 @@ private class ChannelStream(private val ch: FileChannel) : SeekableInputStream {
 
 class PageInfo(val width: Float, val height: Float) { val aspect get() = height / width }
 
-/** All MuPDF access is funnelled through ONE thread: the library is not thread-safe per document. */
+/**
+ * All MuPDF access is funnelled through ONE thread: the library is not thread-safe per document.
+ *
+ * Markup made in this session is NOT written into the document while you work: the UI paints it as vectors,
+ * so every edit (move, resize, recolor…) is instant and pages never need re-rendering. It is written into the
+ * PDF only at save time ([saveWith]).
+ */
 class PdfEngine private constructor(
     private val context: Context,
     private val pfd: ParcelFileDescriptor,
@@ -50,7 +58,7 @@ class PdfEngine private constructor(
     val pageCount get() = pages.size
 
     // ───────────── rendering ─────────────
-    /** Renders [index] so its width is [widthPx]. Annotations are included. Caller keeps a white backdrop. */
+    /** Renders [index] so its width is [widthPx]. Annotations already in the file are included. Caller keeps a white backdrop. */
     suspend fun render(index: Int, widthPx: Int): Bitmap = withContext(io) {
         val page = doc.loadPage(index)
         try {
@@ -93,22 +101,27 @@ class PdfEngine private constructor(
         out
     }
 
-    // ───────────── markup ─────────────
-    suspend fun add(pageIndex: Int, id: Long, m: Markup) = withContext(io) {
-        val page = doc.loadPage(pageIndex) as PDFPage
-        try { create(page, id, m) } finally { page.destroy() }
-    }
-
-    suspend fun removeById(pageIndex: Int, id: Long): Boolean = withContext(io) {
-        val page = doc.loadPage(pageIndex) as PDFPage
+    // ───────────── text selection (for the Highlight tool) ─────────────
+    /** One rect per selected line fragment between [a] and [b] (page coordinates). Empty if there is no text there. */
+    suspend fun selectText(pageIndex: Int, a: PointF, b: PointF): List<RectF> = withContext(io) {
+        val page = doc.loadPage(pageIndex)
         try {
-            val target = page.annotations?.firstOrNull { nameOf(it) == "pt-$id" } ?: return@withContext false
-            page.deleteAnnotation(target); true
+            val st = page.toStructuredText()
+            try {
+                val quads = st.highlight(Point(a.x, a.y), Point(b.x, b.y)) ?: return@withContext emptyList()
+                quads.map { q ->
+                    RectF(
+                        minOf(q.ul_x, q.ll_x), minOf(q.ul_y, q.ur_y),
+                        maxOf(q.ur_x, q.lr_x), maxOf(q.ll_y, q.lr_y),
+                    )
+                }.filter { it.width() > 0.5f && it.height() > 0.5f }
+            } finally { st.destroy() }
         } finally { page.destroy() }
     }
 
-    /** Topmost annotation under [x],[y] (page coords). Returns its session id (or -1 if not ours) and whether anything was removed. */
-    suspend fun eraseAt(pageIndex: Int, x: Float, y: Float, tol: Float): Pair<Long, Boolean> = withContext(io) {
+    // ───────────── erasing annotations already stored in the file ─────────────
+    /** Removes the topmost stored annotation under [x],[y] (page coords). True if one was removed. */
+    suspend fun eraseAt(pageIndex: Int, x: Float, y: Float, tol: Float): Boolean = withContext(io) {
         val page = doc.loadPage(pageIndex) as PDFPage
         try {
             val hit = page.annotations.orEmpty()
@@ -118,13 +131,13 @@ class PdfEngine private constructor(
                         a.type != PDFAnnotation.TYPE_LINK && a.type != PDFAnnotation.TYPE_WIDGET
                 }
                 .minByOrNull { val r = it.bounds; (r.x1 - r.x0) * (r.y1 - r.y0) }
-                ?: return@withContext -1L to false
-            val nm = nameOf(hit)
+                ?: return@withContext false
             page.deleteAnnotation(hit)
-            (nm?.removePrefix("pt-")?.toLongOrNull() ?: -1L) to true
+            true
         } finally { page.destroy() }
     }
 
+    // ───────────── writing markup into the PDF (save time only) ─────────────
     private fun nameOf(a: PDFAnnotation): String? = runCatching {
         val o = a.`object`.get("NM"); if (o != null && o.isString) o.asString() else null
     }.getOrNull()
@@ -133,25 +146,47 @@ class PdfEngine private constructor(
         ((c shr 16) and 0xFF) / 255f, ((c shr 8) and 0xFF) / 255f, (c and 0xFF) / 255f,
     )
 
+    private fun pt(p: PointF) = Point(p.x, p.y)
+
+    private fun addSync(pageIndex: Int, id: Long, m: Markup) {
+        val page = doc.loadPage(pageIndex) as PDFPage
+        try { create(page, id, m) } finally { page.destroy() }
+    }
+
+    private fun removeSync(pageIndex: Int, id: Long) {
+        val page = doc.loadPage(pageIndex) as PDFPage
+        try {
+            page.annotations?.firstOrNull { nameOf(it) == "pt-$id" }?.let { page.deleteAnnotation(it) }
+        } finally { page.destroy() }
+    }
+
+    private fun ink(page: PDFPage, m: Markup, width: Float, opacity: Float): PDFAnnotation =
+        page.createAnnotation(PDFAnnotation.TYPE_INK).apply {
+            setInkList(Geom.strokes(m).map { line -> line.map(::pt).toTypedArray() }.toTypedArray())
+            setColor(rgb(m.color)); setBorderWidth(width); setOpacity(opacity)
+        }
+
     private fun create(page: PDFPage, id: Long, m: Markup) {
         val a: PDFAnnotation = when (m) {
-            is Markup.Ink -> page.createAnnotation(PDFAnnotation.TYPE_INK).apply {
-                setInkList(arrayOf(m.pts.map { Point(it.x, it.y) }.toTypedArray()))
-                setColor(rgb(m.color)); setBorderWidth(m.width); setOpacity(m.opacity)
-            }
+            is Markup.Ink -> ink(page, m, m.width, m.opacity)
+            is Markup.Curve -> ink(page, m, m.width, 1f)
             is Markup.Shape -> when (m.kind) {
-                ShapeKind.Line, ShapeKind.Arrow -> page.createAnnotation(PDFAnnotation.TYPE_LINE).apply {
-                    setLine(Point(m.p0.x, m.p0.y), Point(m.p1.x, m.p1.y))
-                    if (m.kind == ShapeKind.Arrow)
-                        setLineEndingStyles(intArrayOf(PDFAnnotation.LINE_ENDING_NONE, PDFAnnotation.LINE_ENDING_OPEN_ARROW))
-                    setColor(rgb(m.color)); setBorderWidth(m.width)
+                // Arrow is stored as a small ink drawing so the arrow head is exactly what you saw on screen.
+                ShapeKind.Arrow -> ink(page, m, m.width, 1f)
+                ShapeKind.Line -> page.createAnnotation(PDFAnnotation.TYPE_LINE).apply {
+                    setLine(pt(m.p0), pt(m.p1)); setColor(rgb(m.color)); setBorderWidth(m.width)
                 }
                 ShapeKind.Rect, ShapeKind.Circle -> page.createAnnotation(
                     if (m.kind == ShapeKind.Rect) PDFAnnotation.TYPE_SQUARE else PDFAnnotation.TYPE_CIRCLE
                 ).apply {
-                    setRect(Rect(minOf(m.p0.x, m.p1.x), minOf(m.p0.y, m.p1.y), maxOf(m.p0.x, m.p1.x), maxOf(m.p0.y, m.p1.y)))
+                    val r = Geom.rectOf(m.p0, m.p1)
+                    setRect(Rect(r.left, r.top, r.right, r.bottom))
                     setColor(rgb(m.color)); setBorderWidth(m.width)
                 }
+            }
+            is Markup.Highlight -> page.createAnnotation(PDFAnnotation.TYPE_HIGHLIGHT).apply {
+                setQuadPoints(m.rects.map { Quad(it.left, it.top, it.right, it.top, it.left, it.bottom, it.right, it.bottom) }.toTypedArray())
+                setColor(rgb(m.color))
             }
             is Markup.Text -> page.createAnnotation(PDFAnnotation.TYPE_FREE_TEXT).apply {
                 setRect(Rect(m.rect.left, m.rect.top, m.rect.right, m.rect.bottom))
@@ -165,15 +200,23 @@ class PdfEngine private constructor(
     }
 
     // ───────────── save ─────────────
-    /** Full rewrite to a temp file, then copy to [target]. Temp is always removed. */
-    suspend fun saveTo(target: Uri) = withContext(io) {
+    /**
+     * Writes [items] into the document, saves a full rewrite to a temp file, copies it to [target], then takes the items
+     * out of the in-memory document again (so the live document never holds them twice). Temp is always removed.
+     */
+    suspend fun saveWith(target: Uri, items: List<Item>) = withContext(io) {
+        val added = ArrayList<Item>()
         val tmp = File.createTempFile("pteron", ".pdf", context.cacheDir)
         try {
+            for (it in items) { addSync(it.page, it.id, it.m); added += it }
             doc.save(tmp.absolutePath, "garbage=compact,compress")
             context.contentResolver.openOutputStream(target, "wt")!!.use { out ->
                 FileInputStream(tmp).use { it.copyTo(out, 64 * 1024) }
             }
-        } finally { tmp.delete() }
+        } finally {
+            tmp.delete()
+            added.forEach { runCatching { removeSync(it.page, it.id) } }
+        }
     }
 
     suspend fun close() = withContext(io) {
