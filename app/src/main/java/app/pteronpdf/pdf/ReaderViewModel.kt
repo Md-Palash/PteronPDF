@@ -180,7 +180,7 @@ class ReaderViewModel(app: Application, val uri: Uri) : AndroidViewModel(app) {
     }
 
     /** Colour applies to the selected markup too, so everything stays editable after it is drawn. */
-    fun setColor(c: Int, coalesce: Boolean = false) {
+    fun applyColor(c: Int, coalesce: Boolean = false) {
         color = c
         editSelected(coalesce) { it.withColor(c) }
     }
