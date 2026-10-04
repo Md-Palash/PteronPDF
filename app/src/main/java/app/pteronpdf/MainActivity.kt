@@ -7,20 +7,27 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
+import app.pteronpdf.data.AppSettings
 import app.pteronpdf.data.Prefs
 import app.pteronpdf.pdf.ReaderViewModel
+import app.pteronpdf.theme.Fonts
 import app.pteronpdf.theme.PteronTheme
 import app.pteronpdf.theme.ThemePresets
 import app.pteronpdf.ui.HomeScreen
 import app.pteronpdf.ui.ReaderScreen
+import app.pteronpdf.ui.SettingsScreen
 
 class MainActivity : ComponentActivity() {
     private var openUri by mutableStateOf<Uri?>(null)
@@ -31,30 +38,30 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         openUri = savedInstanceState?.getString("uri")?.let(Uri::parse) ?: intent?.takeIf { it.action == Intent.ACTION_VIEW }?.data
         val prefs = Prefs(this)
+        val settings = AppSettings(prefs)
         setContent {
-            var themeIndex by remember { mutableStateOf(prefs.themeIndex) }
-            var dark by remember { mutableStateOf(prefs.darkMode) }
-            PteronTheme(ThemePresets[themeIndex], dark) {
+            val ctx = LocalContext.current
+            val font = remember(settings.font) { Fonts.family(ctx, settings.font) }
+            PteronTheme(ThemePresets[settings.themeIndex], settings.darkMode, font) {
+                var showSettings by remember { mutableStateOf(false) }
                 val u = openUri
-                if (u == null) {
-                    HomeScreen(
-                        prefs = prefs, themeIndex = themeIndex, darkMode = dark,
-                        onTheme = { themeIndex = it; prefs.themeIndex = it },
-                        onDark = { dark = it; prefs.darkMode = it },
-                        onOpen = { openUri = it },
-                    )
-                } else {
-                    val vm: ReaderViewModel = viewModel(key = u.toString(), factory = object : ViewModelProvider.Factory {
-                        @Suppress("UNCHECKED_CAST")
-                        override fun <T : ViewModel> create(modelClass: Class<T>): T =
-                            ReaderViewModel(application as Application, u) as T
-                    })
-                    ReaderScreen(
-                        vm = vm, themeIndex = themeIndex, darkMode = dark,
-                        onTheme = { themeIndex = it; prefs.themeIndex = it },
-                        onDark = { dark = it; prefs.darkMode = it },
-                        onClose = { vm.touchRecent(); openUri = null },
-                    )
+                Box(Modifier.fillMaxSize()) {
+                    if (u == null) {
+                        HomeScreen(prefs = prefs, settings = settings, onOpen = { openUri = it }, onSettings = { showSettings = true })
+                    } else {
+                        val vm: ReaderViewModel = viewModel(key = u.toString(), factory = object : ViewModelProvider.Factory {
+                            @Suppress("UNCHECKED_CAST")
+                            override fun <T : ViewModel> create(modelClass: Class<T>): T =
+                                ReaderViewModel(application as Application, u) as T
+                        })
+                        ReaderScreen(
+                            vm = vm, settings = settings,
+                            onClose = { vm.touchRecent(); openUri = null },
+                            onSettings = { showSettings = true },
+                        )
+                    }
+                    // Opens above whichever screen is showing, so the reader's state is untouched underneath.
+                    if (showSettings) SettingsScreen(settings, onClose = { showSettings = false })
                 }
             }
         }
