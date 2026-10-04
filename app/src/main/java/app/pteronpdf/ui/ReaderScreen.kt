@@ -1,7 +1,6 @@
 package app.pteronpdf.ui
 
 import android.graphics.PointF
-import android.graphics.RectF
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -9,7 +8,6 @@ import androidx.compose.animation.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -24,6 +22,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.*
@@ -31,6 +30,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -38,23 +38,26 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import app.pteronpdf.data.AppSettings
 import app.pteronpdf.pdf.*
-import app.pteronpdf.theme.DarkMode
 import app.pteronpdf.theme.LocalPteron
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
+private sealed interface TextReq {
+    data class New(val page: Int, val at: PointF) : TextReq
+    data class Edit(val item: Item) : TextReq
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ReaderScreen(
-    vm: ReaderViewModel, themeIndex: Int, darkMode: DarkMode,
-    onTheme: (Int) -> Unit, onDark: (DarkMode) -> Unit, onClose: () -> Unit,
-) {
+fun ReaderScreen(vm: ReaderViewModel, settings: AppSettings, onClose: () -> Unit, onSettings: () -> Unit) {
     val c = LocalPteron.current
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
     val snackbar = remember { SnackbarHostState() }
     val engine = vm.engine
+    val reading = settings.readingMode
 
     var chromeVisible by remember { mutableStateOf(true) }
     var searchOpen by remember { mutableStateOf(false) }
@@ -63,8 +66,19 @@ fun ReaderScreen(
     var showColor by remember { mutableStateOf(false) }
     var showMenu by remember { mutableStateOf(false) }
     var showUnsaved by remember { mutableStateOf(false) }
-    var textRequest by remember { mutableStateOf<Pair<Int, PointF>?>(null) }
+    var textRequest by remember { mutableStateOf<TextReq?>(null) }
     val editing = vm.tool != Tool.None
+    // Reading mode: the bar hides until you tap the page. Otherwise the bar is always there.
+    val barVisible = !reading || chromeVisible || editing || searchOpen
+
+    LaunchedEffect(reading) { chromeVisible = !reading }
+
+    // Keep screen awake (setting), only while reading
+    val view = LocalView.current
+    DisposableEffect(settings.keepAwake) {
+        view.keepScreenOn = settings.keepAwake
+        onDispose { view.keepScreenOn = false }
+    }
 
     // restore last-read page once
     LaunchedEffect(engine) { if (engine != null && vm.initialPage > 0) listState.scrollToItem(vm.initialPage) }
@@ -111,10 +125,14 @@ fun ReaderScreen(
         when {
             showThumbs -> showThumbs = false
             searchOpen -> { searchOpen = false; vm.clearSearch() }
-            editing -> vm.tool = Tool.None
+            editing -> vm.chooseTool(Tool.None)
             else -> requestClose()
         }
     }
+
+    val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val topPad = if (reading) statusTop + 8.dp else statusTop + TopBarHeight + 10.dp
+    val bottomPad = if (editing) 290.dp else 96.dp
 
     Box(Modifier.fillMaxSize().background(c.canvas)) {
         when {
@@ -124,51 +142,76 @@ fun ReaderScreen(
             }
             engine == null -> CircularProgressIndicator(Modifier.align(Alignment.Center), color = c.accent)
             else -> {
-                PageList(vm, engine, listState, onText = { p, pt -> textRequest = p to pt }, onTapEmpty = { chromeVisible = !chromeVisible })
+                PageList(
+                    vm, engine, listState,
+                    onText = { p, pt -> textRequest = TextReq.New(p, pt) },
+                    onEditText = { textRequest = TextReq.Edit(it) },
+                    onTapEmpty = { if (reading && !editing) chromeVisible = !chromeVisible },
+                    topPad = topPad, bottomPad = bottomPad,
+                )
                 Scrubber(listState, engine.pageCount, Modifier.align(Alignment.CenterEnd))
             }
         }
 
-        // ── top chrome ──
+        // ── fixed top bar ──
         AnimatedVisibility(
-            visible = chromeVisible || editing || searchOpen,
+            visible = barVisible,
             enter = slideInVertically { -it } + fadeIn(), exit = slideOutVertically { -it } + fadeOut(),
             modifier = Modifier.align(Alignment.TopCenter),
         ) {
-            Box(Modifier.statusBarsPadding().padding(horizontal = 10.dp, vertical = 8.dp)) {
-                if (searchOpen) SearchBar(vm, onClose = { searchOpen = false; vm.clearSearch() })
-                else PillCard(Modifier.fillMaxWidth()) {
+            FixedTopBar {
+                if (searchOpen) SearchRow(vm, onClose = { searchOpen = false; vm.clearSearch() })
+                else {
                     BarIconButton(PIcon.Back, "Back", ::requestClose)
-                    Column(Modifier.weight(1f).padding(horizontal = 6.dp)) {
-                        Text(vm.name, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = c.onBar, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        if (engine != null) Text("${vm.currentPage + 1} / ${engine.pageCount}" + if (vm.dirty) "  •  unsaved" else "",
-                            fontSize = 11.sp, color = c.onBar.copy(alpha = 0.6f))
-                    }
                     BarIconButton(PIcon.Search, "Search", { searchOpen = true })
-                    BarIconButton(PIcon.Edit, "Markup tools", { vm.tool = if (editing) Tool.None else Tool.PenWrite }, selected = editing)
+                    Spacer(Modifier.weight(1f))
+                    if (vm.dirty) Box(Modifier.padding(end = 8.dp).size(7.dp).clip(CircleShape).background(c.accent))
+                    if (engine != null) Text(
+                        "${vm.currentPage + 1}/${engine.pageCount}",
+                        fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = c.onBar,
+                    )
+                    Spacer(Modifier.width(4.dp))
                     Box {
                         BarIconButton(PIcon.More, "More", { showMenu = true })
-                        DropdownMenu(showMenu, { showMenu = false }) {
+                        DropdownMenu(
+                            expanded = showMenu, onDismissRequest = { showMenu = false },
+                            shape = RoundedCornerShape(20.dp), containerColor = c.bar,
+                        ) {
                             DropdownMenuItem(text = { Text("Pages") }, onClick = { showMenu = false; showThumbs = true })
                             DropdownMenuItem(text = { Text("Save") }, enabled = vm.dirty, onClick = { showMenu = false; vm.save() })
                             DropdownMenuItem(text = { Text("Save a copy…") }, onClick = { showMenu = false; saveAs.launch(vm.name.removeSuffix(".pdf") + " (copy).pdf") })
                             DropdownMenuItem(text = { Text("Theme") }, onClick = { showMenu = false; showTheme = true })
+                            DropdownMenuItem(text = { Text("Settings") }, onClick = { showMenu = false; onSettings() })
                         }
                     }
                 }
             }
         }
 
-        // ── markup bar ──
+        // ── edit button: small rounded square, bottom right ──
+        AnimatedVisibility(
+            visible = !editing && barVisible && engine != null,
+            enter = fadeIn() + scaleIn(), exit = fadeOut() + scaleOut(),
+            modifier = Modifier.align(Alignment.BottomEnd),
+        ) {
+            Box(
+                Modifier.navigationBarsPadding().padding(end = 16.dp, bottom = 16.dp).size(52.dp)
+                    .shadow(8.dp, RoundedCornerShape(16.dp)).clip(RoundedCornerShape(16.dp)).background(c.accent)
+                    .clickable { vm.chooseTool(Tool.Pen) },
+                contentAlignment = Alignment.Center,
+            ) { PIconView(PIcon.Edit, c.onAccent, Modifier.size(24.dp), "Edit") }
+        }
+
+        // ── editing card: slides up from the bottom, top corners rounded ──
         AnimatedVisibility(
             visible = editing,
             enter = slideInVertically { it } + fadeIn(), exit = slideOutVertically { it } + fadeOut(),
             modifier = Modifier.align(Alignment.BottomCenter),
         ) {
-            MarkupBar(vm, onColor = { showColor = true })
+            EditPanel(vm, onCustomColor = { showColor = true }, onEditText = { textRequest = TextReq.Edit(it) })
         }
 
-        SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 90.dp))
+        SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = if (editing) 300.dp else 90.dp))
     }
 
     // ── sheets & dialogs ──
@@ -176,24 +219,20 @@ fun ReaderScreen(
         ThumbnailGrid(vm, engine, onPick = { i -> showThumbs = false; scope.launch { listState.scrollToItem(i) } })
     }
     if (showTheme) ModalBottomSheet(onDismissRequest = { showTheme = false }, containerColor = c.bar) {
-        ThemeSheetContent(themeIndex, darkMode, onTheme, onDark)
+        ThemeSheetContent(settings.themeIndex, settings.darkMode, settings::setTheme, settings::setDark)
     }
     if (showColor) ModalBottomSheet(onDismissRequest = { showColor = false }, containerColor = c.bar) {
-        ColorSheetContent(vm)
+        HueSheetContent(vm)
     }
-    textRequest?.let { (page, at) ->
+    textRequest?.let { req ->
         TextDialog(
-            vm.textSizeDp, onSize = { vm.textSizeDp = it }, onDismiss = { textRequest = null },
-            onConfirm = { text, bold ->
-                val e = vm.engine
-                if (e != null && text.isNotBlank()) {
-                    val info = e.pages[page]
-                    // size in dp -> PDF points using the page's current on-screen scale (approx. 1dp ≈ pageWidth/screenWidthDp)
-                    val fs = vm.textSizeDp * (info.width / 392f)
-                    val lines = text.split('\n')
-                    val w = lines.maxOf { it.length } * fs * 0.56f + 8f
-                    val h = lines.size * fs * 1.25f + 6f
-                    vm.addMarkup(page, Markup.Text(RectF(at.x, at.y, at.x + w, at.y + h), text, vm.color, fs, bold))
+            title = if (req is TextReq.New) "Add comment" else "Edit comment",
+            initial = (req as? TextReq.Edit)?.item?.m.let { (it as? Markup.Text)?.text ?: "" },
+            onDismiss = { textRequest = null },
+            onConfirm = { text ->
+                when (req) {
+                    is TextReq.New -> vm.addText(req.page, req.at, text)
+                    is TextReq.Edit -> vm.updateText(req.item, text)
                 }
                 textRequest = null
             },
@@ -214,55 +253,166 @@ fun ReaderScreen(
 }
 
 @Composable
-private fun SearchBar(vm: ReaderViewModel, onClose: () -> Unit) {
+private fun RowScope.SearchRow(vm: ReaderViewModel, onClose: () -> Unit) {
     val c = LocalPteron.current
     val focus = remember { FocusRequester() }
     val kb = LocalSoftwareKeyboardController.current
     LaunchedEffect(Unit) { focus.requestFocus() }
-    PillCard(Modifier.fillMaxWidth()) {
-        BarIconButton(PIcon.Back, "Close search", onClose)
-        Box(Modifier.weight(1f).padding(horizontal = 4.dp)) {
-            if (vm.query.isEmpty()) Text("Search in document", color = c.onBar.copy(alpha = 0.45f), fontSize = 15.sp)
-            BasicTextField(
-                vm.query, { vm.query = it },
-                Modifier.fillMaxWidth().focusRequester(focus),
-                singleLine = true, textStyle = TextStyle(color = c.onBar, fontSize = 15.sp),
-                cursorBrush = SolidColor(c.accent),
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(onSearch = { vm.runSearch(); kb?.hide() }),
-            )
+    BarIconButton(PIcon.Back, "Close search", onClose)
+    Box(Modifier.weight(1f).padding(horizontal = 4.dp)) {
+        if (vm.query.isEmpty()) Text("Search in document", color = c.onBar.copy(alpha = 0.45f), fontSize = 15.sp)
+        BasicTextField(
+            vm.query, { vm.query = it },
+            Modifier.fillMaxWidth().focusRequester(focus),
+            singleLine = true, textStyle = TextStyle(color = c.onBar, fontSize = 15.sp),
+            cursorBrush = SolidColor(c.accent),
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+            keyboardActions = KeyboardActions(onSearch = { vm.runSearch(); kb?.hide() }),
+        )
+    }
+    when {
+        vm.searching -> CircularProgressIndicator(Modifier.size(20.dp).padding(2.dp), strokeWidth = 2.dp, color = c.accent)
+        vm.hits.isNotEmpty() -> Text("${vm.hitIndex + 1}/${vm.hits.size}", fontSize = 12.sp, color = c.onBar.copy(alpha = 0.7f))
+        vm.searchedOnce -> Text("No results", fontSize = 12.sp, color = c.onBar.copy(alpha = 0.7f))
+    }
+    BarIconButton(PIcon.Up, "Previous", vm::prevHit, enabled = vm.hits.isNotEmpty())
+    BarIconButton(PIcon.Down, "Next", vm::nextHit, enabled = vm.hits.isNotEmpty())
+}
+
+private val PenSwatches = listOf(0xFF0A84FF, 0xFFE5383B, 0xFFFF9F0A, 0xFFFFD60A, 0xFF30D158, 0xFF0E6E5E, 0xFF8E44AD, 0xFFFF2D92, 0xFF1C1C1E, 0xFFFFFFFF)
+private val HighlightSwatches = listOf(0xFFFFD60A, 0xFF7CF29A, 0xFFFF8FB8, 0xFFFFA24D, 0xFF6EC6FF, 0xFFC59BFF)
+
+private data class ToolDef(val tool: Tool, val icon: PIcon, val label: String)
+private val ToolDefs = listOf(
+    ToolDef(Tool.Select, PIcon.Select, "Select"),
+    ToolDef(Tool.Pen, PIcon.Pen, "Pen"),
+    ToolDef(Tool.Highlight, PIcon.Highlighter, "Highlight"),
+    ToolDef(Tool.Line, PIcon.Line, "Line"),
+    ToolDef(Tool.Curve, PIcon.Curve, "Curve"),
+    ToolDef(Tool.Arrow, PIcon.Arrow, "Arrow"),
+    ToolDef(Tool.Rect, PIcon.Rect, "Square"),
+    ToolDef(Tool.Circle, PIcon.Circle, "Circle"),
+    ToolDef(Tool.Text, PIcon.Text, "Comment"),
+    ToolDef(Tool.Erase, PIcon.Eraser, "Erase"),
+)
+
+@Composable
+private fun EditPanel(vm: ReaderViewModel, onCustomColor: () -> Unit, onEditText: (Item) -> Unit) {
+    val c = LocalPteron.current
+    val shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp, bottomStart = 0.dp, bottomEnd = 0.dp)
+    val sel = vm.selected
+    val tool = vm.tool
+    val selText = sel?.m as? Markup.Text
+    val showText = tool == Tool.Text || selText != null
+    val widthNow = vm.currentWidth()
+    val showWidth = !showText && widthNow != null && tool != Tool.Erase && tool != Tool.Highlight
+    val activeColor = sel?.m?.color ?: vm.color
+    val swatches = if (tool == Tool.Highlight || sel?.m is Markup.Highlight) HighlightSwatches else PenSwatches
+
+    Column(
+        Modifier.fillMaxWidth().shadow(14.dp, shape).clip(shape).background(c.bar)
+            .navigationBarsPadding().padding(top = 8.dp, bottom = 8.dp)
+    ) {
+        Box(Modifier.align(Alignment.CenterHorizontally).size(width = 36.dp, height = 4.dp).clip(RoundedCornerShape(2.dp)).background(c.onBar.copy(alpha = 0.22f)))
+        Spacer(Modifier.height(8.dp))
+
+        // tools
+        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 10.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            ToolDefs.forEach { d ->
+                val on = tool == d.tool
+                Column(
+                    Modifier.width(60.dp).clip(RoundedCornerShape(14.dp)).background(if (on) c.accent else Color.Transparent)
+                        .clickable { vm.chooseTool(d.tool) }.padding(vertical = 8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    PIconView(d.icon, if (on) c.onAccent else c.onBar, Modifier.size(22.dp), d.label)
+                    Spacer(Modifier.height(3.dp))
+                    Text(d.label, fontSize = 10.sp, color = if (on) c.onAccent else c.onBar, maxLines = 1)
+                }
+            }
         }
+
+        // colours
+        if (tool != Tool.Erase && tool != Tool.Select || sel != null) {
+            Spacer(Modifier.height(6.dp))
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically,
+            ) {
+                swatches.forEach { sw ->
+                    val col = Color(sw); val on = activeColor == col.toArgb()
+                    Box(
+                        Modifier.size(30.dp).clip(CircleShape).background(col)
+                            .border(if (on) 3.dp else 1.dp, if (on) c.accent else c.onBar.copy(alpha = 0.2f), CircleShape)
+                            .clickable { vm.setColor(col.toArgb()) }
+                    )
+                }
+                Box(
+                    Modifier.size(30.dp).clip(CircleShape)
+                        .background(Brush.sweepGradient((0..6).map { Color.hsv(it * 60f, 0.85f, 0.95f) }))
+                        .border(1.dp, c.onBar.copy(alpha = 0.2f), CircleShape).clickable(onClick = onCustomColor)
+                )
+            }
+        }
+
+        // thickness / text options / hints
         when {
-            vm.searching -> CircularProgressIndicator(Modifier.size(20.dp).padding(2.dp), strokeWidth = 2.dp, color = c.accent)
-            vm.hits.isNotEmpty() -> Text("${vm.hitIndex + 1}/${vm.hits.size}", fontSize = 12.sp, color = c.onBar.copy(alpha = 0.7f))
-            vm.searchedOnce -> Text("No results", fontSize = 12.sp, color = c.onBar.copy(alpha = 0.7f))
+            showWidth -> LabeledSlider("Thickness", widthNow!!, 0.5f..12f) { vm.setWidth(it) }
+            showText -> {
+                val size = selText?.fontSize ?: vm.textSize
+                val bold = selText?.bold ?: vm.textBold
+                LabeledSlider("Text size", size, 8f..48f) { vm.setTextStyle(size = it) }
+                Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ToggleChip("Bold", bold) { vm.setTextStyle(bold = !bold, coalesce = false) }
+                    if (sel != null && selText != null) ToggleChip("Edit text", false) { onEditText(sel) }
+                    if (sel == null) Text("Tap the page to place a comment", fontSize = 12.sp, color = c.onBar.copy(alpha = 0.6f))
+                }
+            }
+            tool == Tool.Highlight -> Hint("Drag across text to highlight it")
+            tool == Tool.Select && sel == null -> Hint("Tap a mark to select it, then drag to move or use the dots to resize")
+            tool == Tool.Erase -> Hint("Tap or drag over a mark to erase it")
         }
-        BarIconButton(PIcon.Up, "Previous", vm::prevHit, enabled = vm.hits.isNotEmpty())
-        BarIconButton(PIcon.Down, "Next", vm::nextHit, enabled = vm.hits.isNotEmpty())
+
+        Spacer(Modifier.height(4.dp))
+        // actions
+        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            BarIconButton(PIcon.Undo, "Undo", vm::undo, enabled = vm.undoStack.isNotEmpty())
+            BarIconButton(PIcon.Redo, "Redo", vm::redo, enabled = vm.redoStack.isNotEmpty())
+            BarIconButton(PIcon.Trash, "Delete", vm::removeSelected, enabled = sel != null)
+            Spacer(Modifier.weight(1f))
+            Box(
+                Modifier.clip(RoundedCornerShape(14.dp)).background(c.accent).clickable { vm.chooseTool(Tool.None) }
+                    .padding(horizontal = 22.dp, vertical = 10.dp)
+            ) { Text("Done", color = c.onAccent, fontSize = 14.sp, fontWeight = FontWeight.SemiBold) }
+            Spacer(Modifier.width(8.dp))
+        }
     }
 }
 
 @Composable
-private fun MarkupBar(vm: ReaderViewModel, onColor: () -> Unit) {
+private fun Hint(text: String) {
     val c = LocalPteron.current
-    Box(Modifier.navigationBarsPadding().padding(horizontal = 10.dp, vertical = 10.dp)) {
-        PillCard(Modifier.fillMaxWidth()) {
-            Row(Modifier.weight(1f).horizontalScroll(rememberScrollState())) {
-                listOf(
-                    Tool.PenWrite to PIcon.Pen, Tool.PenMark to PIcon.Marker, Tool.Highlighter to PIcon.Highlighter,
-                    Tool.Line to PIcon.Line, Tool.Arrow to PIcon.Arrow, Tool.Rect to PIcon.Rect, Tool.Circle to PIcon.Circle,
-                    Tool.Text to PIcon.Text, Tool.Erase to PIcon.Eraser,
-                ).forEach { (t, icon) -> BarIconButton(icon, t.name, { vm.tool = t }, selected = vm.tool == t) }
-            }
-            Box(
-                Modifier.padding(horizontal = 4.dp).size(30.dp).clip(CircleShape)
-                    .background(Color(vm.color)).border(2.dp, c.onBar.copy(alpha = 0.25f), CircleShape)
-                    .clickable(onClick = onColor)
-            )
-            BarIconButton(PIcon.Undo, "Undo", vm::undo, enabled = vm.undoStack.isNotEmpty())
-            BarIconButton(PIcon.Redo, "Redo", vm::redo, enabled = vm.redoStack.isNotEmpty())
-            BarIconButton(PIcon.Check, "Done", { vm.tool = Tool.None })
-        }
+    Text(text, Modifier.padding(horizontal = 18.dp, vertical = 8.dp), fontSize = 12.sp, color = c.onBar.copy(alpha = 0.65f))
+}
+
+@Composable
+private fun ToggleChip(label: String, on: Boolean, onClick: () -> Unit) {
+    val c = LocalPteron.current
+    Box(
+        Modifier.clip(RoundedCornerShape(12.dp)).background(if (on) c.accent else c.chip).clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 8.dp)
+    ) { Text(label, fontSize = 13.sp, color = if (on) c.onAccent else c.onBar) }
+}
+
+@Composable
+private fun LabeledSlider(label: String, value: Float, range: ClosedFloatingPointRange<Float>, onChange: (Float) -> Unit) {
+    val c = LocalPteron.current
+    Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text("$label  ${"%.1f".format(value)}", fontSize = 12.sp, color = c.onBar.copy(alpha = 0.7f), modifier = Modifier.width(108.dp))
+        Slider(
+            value.coerceIn(range), onChange, valueRange = range, modifier = Modifier.weight(1f).height(36.dp),
+            colors = SliderDefaults.colors(thumbColor = c.accent, activeTrackColor = c.accent, inactiveTrackColor = c.chip),
+        )
     }
 }
 
@@ -330,67 +480,33 @@ private fun ThumbnailGrid(vm: ReaderViewModel, engine: PdfEngine, onPick: (Int) 
     }
 }
 
-private val Swatches = listOf(0xFF0A84FF, 0xFFE5383B, 0xFFFF9F0A, 0xFFFFD60A, 0xFF30D158, 0xFF0E6E5E, 0xFF8E44AD, 0xFFFF2D92, 0xFF1C1C1E, 0xFFFFFFFF)
-
+/** Custom colour: a hue slider (the quick swatches live in the editing card). */
 @Composable
-private fun ColorSheetContent(vm: ReaderViewModel) {
+private fun HueSheetContent(vm: ReaderViewModel) {
     val c = LocalPteron.current
     var hue by remember { mutableFloatStateOf(210f) }
-    val tool = vm.tool
     Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 28.dp).navigationBarsPadding()) {
-        Text("Color & thickness", fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = c.onBar)
+        Text("Custom colour", fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = c.onBar)
         Spacer(Modifier.height(14.dp))
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Swatches.forEach { s ->
-                val col = Color(s)
-                Box(Modifier.weight(1f).aspectRatio(1f).clip(CircleShape).background(col)
-                    .border(if (vm.color == col.toArgb()) 3.dp else 1.dp, if (vm.color == col.toArgb()) c.accent else c.onBar.copy(alpha = 0.2f), CircleShape)
-                    .clickable { vm.color = col.toArgb() })
-            }
-        }
-        Spacer(Modifier.height(14.dp))
-        Text("Custom", fontSize = 12.sp, color = c.onBar.copy(alpha = 0.6f))
         val hueBrush = Brush.horizontalGradient((0..6).map { Color.hsv(it * 60f, 0.85f, 0.95f) })
         Box(Modifier.fillMaxWidth().height(28.dp)) {
             Box(Modifier.align(Alignment.Center).fillMaxWidth().height(10.dp).clip(RoundedCornerShape(5.dp)).background(hueBrush))
-            Slider(hue, { hue = it; vm.color = Color.hsv(it, 0.85f, 0.95f).toArgb() }, valueRange = 0f..360f,
+            Slider(hue, { hue = it; vm.setColor(Color.hsv(it, 0.85f, 0.95f).toArgb(), coalesce = true) }, valueRange = 0f..360f,
                 colors = SliderDefaults.colors(thumbColor = c.accent, activeTrackColor = Color.Transparent, inactiveTrackColor = Color.Transparent))
         }
-        if (tool != Tool.Text && tool != Tool.Erase && tool != Tool.None) {
-            Spacer(Modifier.height(10.dp))
-            val w = vm.widths[tool] ?: 3f
-            @Suppress("UNUSED_VARIABLE") val t = vm.widthTick
-            Text("Thickness  ${"%.1f".format(w)}", fontSize = 12.sp, color = c.onBar.copy(alpha = 0.6f))
-            Slider(w, { vm.widths[tool] = it; vm.widthTick++ }, valueRange = 1f..28f,
-                colors = SliderDefaults.colors(thumbColor = c.accent, activeTrackColor = c.accent))
-            Box(Modifier.fillMaxWidth().height(36.dp), contentAlignment = Alignment.Center) {
-                Box(Modifier.fillMaxWidth(0.6f).height(w.dp).clip(CircleShape).background(Color(vm.color).copy(alpha = if (tool == Tool.Highlighter) 0.35f else 1f)))
-            }
-        }
+        Spacer(Modifier.height(16.dp))
+        Box(Modifier.fillMaxWidth().height(36.dp).clip(RoundedCornerShape(12.dp)).background(Color(vm.selected?.m?.color ?: vm.color)))
     }
 }
 
 @Composable
-private fun TextDialog(size: Float, onSize: (Float) -> Unit, onDismiss: () -> Unit, onConfirm: (String, Boolean) -> Unit) {
-    var text by remember { mutableStateOf("") }
-    var bold by remember { mutableStateOf(false) }
+private fun TextDialog(title: String, initial: String, onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
+    var text by remember { mutableStateOf(initial) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Add text") },
-        text = {
-            Column {
-                OutlinedTextField(text, { text = it }, Modifier.fillMaxWidth(), minLines = 2, maxLines = 5)
-                Spacer(Modifier.height(10.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Size", fontSize = 13.sp); Spacer(Modifier.width(10.dp))
-                    Slider(size, onSize, valueRange = 10f..40f, modifier = Modifier.weight(1f))
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(bold, { bold = it }); Text("Bold")
-                }
-            }
-        },
-        confirmButton = { TextButton({ onConfirm(text, bold) }) { Text("Add") } },
+        title = { Text(title) },
+        text = { OutlinedTextField(text, { text = it }, Modifier.fillMaxWidth(), minLines = 3, maxLines = 6) },
+        confirmButton = { TextButton({ onConfirm(text) }) { Text(if (initial.isEmpty()) "Add" else "Save") } },
         dismissButton = { TextButton(onDismiss) { Text("Cancel") } },
     )
 }

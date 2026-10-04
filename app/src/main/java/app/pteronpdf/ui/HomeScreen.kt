@@ -20,20 +20,17 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import app.pteronpdf.data.AppSettings
 import app.pteronpdf.data.Prefs
 import app.pteronpdf.data.RecentDoc
-import app.pteronpdf.theme.DarkMode
 import app.pteronpdf.theme.LocalPteron
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HomeScreen(
-    prefs: Prefs, themeIndex: Int, darkMode: DarkMode,
-    onTheme: (Int) -> Unit, onDark: (DarkMode) -> Unit, onOpen: (Uri) -> Unit,
-) {
+fun HomeScreen(prefs: Prefs, settings: AppSettings, onOpen: (Uri) -> Unit, onSettings: () -> Unit) {
     val c = LocalPteron.current
     val ctx = LocalContext.current
-    var recents by remember { mutableStateOf(prefs.recents()) }
+    val recents by remember { mutableStateOf(prefs.recents()) }
     var showTheme by remember { mutableStateOf(false) }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -51,7 +48,10 @@ fun HomeScreen(
     Box(Modifier.fillMaxSize().background(c.canvas).statusBarsPadding().navigationBarsPadding()) {
         Column(Modifier.fillMaxSize().padding(horizontal = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End) {
-                PillCard { BarIconButton(PIcon.Theme, "Theme", { showTheme = true }) }
+                PillCard {
+                    BarIconButton(PIcon.Theme, "Theme", { showTheme = true })
+                    BarIconButton(PIcon.Settings, "Settings", onSettings)
+                }
             }
             if (recents.isEmpty()) {
                 Spacer(Modifier.weight(1f))
@@ -85,7 +85,7 @@ fun HomeScreen(
         }
     }
     if (showTheme) ModalBottomSheet(onDismissRequest = { showTheme = false }, containerColor = c.bar) {
-        ThemeSheetContent(themeIndex, darkMode, onTheme, onDark)
+        ThemeSheetContent(settings.themeIndex, settings.darkMode, settings::setTheme, settings::setDark)
     }
 }
 

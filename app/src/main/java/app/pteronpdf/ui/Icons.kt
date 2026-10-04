@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.*
@@ -17,8 +18,8 @@ import androidx.compose.ui.semantics.semantics
  * Hand-drawn line icons (24x24 grid) — zero icon-library dependency, so no
  * material-icons-extended (~10 MB of classes) in the APK.
  */
-enum class PIcon { Back, Open, Save, Search, Up, Down, Close, Undo, Redo, Edit, Grid, Theme, Pen, Marker, Highlighter,
-    Line, Arrow, Rect, Circle, Text, Eraser, Check, More }
+enum class PIcon { Back, Open, Save, Search, Up, Down, Close, Undo, Redo, Edit, Grid, Theme, Pen, Highlighter,
+    Line, Curve, Arrow, Rect, Circle, Text, Eraser, Check, More, Select, Settings, Trash, Chevron, Palette, Type, Book, Info }
 
 @Composable
 fun PIconView(icon: PIcon, tint: Color, modifier: Modifier = Modifier.size(22.dp), desc: String? = null) {
@@ -30,6 +31,7 @@ fun PIconView(icon: PIcon, tint: Color, modifier: Modifier = Modifier.size(22.dp
         fun DrawScope.line(a: Offset, b: Offset) = drawLine(tint, a, b, st.width, StrokeCap.Round)
         when (icon) {
             PIcon.Back -> { line(p(15f, 5f), p(8f, 12f)); line(p(8f, 12f), p(15f, 19f)) }
+            PIcon.Chevron -> { line(p(9f, 5f), p(16f, 12f)); line(p(16f, 12f), p(9f, 19f)) }
             PIcon.Up -> { line(p(5f, 15f), p(12f, 8f)); line(p(12f, 8f), p(19f, 15f)) }
             PIcon.Down -> { line(p(5f, 9f), p(12f, 16f)); line(p(12f, 16f), p(19f, 9f)) }
             PIcon.Close -> { line(p(6f, 6f), p(18f, 18f)); line(p(18f, 6f), p(6f, 18f)) }
@@ -52,18 +54,39 @@ fun PIconView(icon: PIcon, tint: Color, modifier: Modifier = Modifier.size(22.dp
                 drawPath(path { moveTo(4f * k, 20f * k); lineTo(5f * k, 15f * k); lineTo(16f * k, 4f * k); lineTo(20f * k, 8f * k); lineTo(9f * k, 19f * k); close() }, tint, style = st)
                 line(p(13.5f, 6.5f), p(17.5f, 10.5f))
             }
-            PIcon.Grid -> listOf(4f to 4f, 13.5f to 4f, 4f to 13.5f, 13.5f to 13.5f).forEach { (x, y) -> drawRoundRect(tint, p(x, y), Size(6.5f * k, 6.5f * k), androidx.compose.ui.geometry.CornerRadius(1.5f * k), style = st) }
+            PIcon.Grid -> listOf(4f to 4f, 13.5f to 4f, 4f to 13.5f, 13.5f to 13.5f).forEach { (x, y) -> drawRoundRect(tint, p(x, y), Size(6.5f * k, 6.5f * k), CornerRadius(1.5f * k), style = st) }
             PIcon.Theme -> { drawCircle(tint, 8f * k, p(12f, 12f), style = st); drawPath(path { moveTo(12f * k, 4f * k); arcTo(androidx.compose.ui.geometry.Rect(p(4f, 4f), Size(16f * k, 16f * k)), -90f, 180f, false); close() }, tint) }
             PIcon.Pen -> { drawPath(path { moveTo(4f * k, 20f * k); quadraticTo(8f * k, 6f * k, 12f * k, 12f * k); quadraticTo(15f * k, 17f * k, 20f * k, 5f * k) }, tint, style = st) }
-            PIcon.Marker -> { drawPath(path { moveTo(4f * k, 20f * k); lineTo(5f * k, 15f * k); lineTo(15f * k, 5f * k); lineTo(19f * k, 9f * k); lineTo(9f * k, 19f * k); close() }, tint, style = Stroke(width = 3.2f * k, cap = StrokeCap.Round, join = StrokeJoin.Round)) }
-            PIcon.Highlighter -> { drawRoundRect(tint.copy(alpha = 0.35f), p(4f, 8f), Size(16f * k, 8f * k), androidx.compose.ui.geometry.CornerRadius(2f * k)); line(p(6f, 19f), p(18f, 19f)) }
+            PIcon.Highlighter -> { drawRoundRect(tint.copy(alpha = 0.35f), p(4f, 8f), Size(16f * k, 8f * k), CornerRadius(2f * k)); line(p(6f, 19f), p(18f, 19f)) }
             PIcon.Line -> line(p(5f, 19f), p(19f, 5f))
+            PIcon.Curve -> drawPath(path { moveTo(4f * k, 18f * k); quadraticTo(6f * k, 4f * k, 20f * k, 6f * k) }, tint, style = st)
             PIcon.Arrow -> { line(p(5f, 19f), p(19f, 5f)); line(p(10f, 5f), p(19f, 5f)); line(p(19f, 5f), p(19f, 14f)) }
-            PIcon.Rect -> drawRoundRect(tint, p(4f, 6f), Size(16f * k, 12f * k), androidx.compose.ui.geometry.CornerRadius(1.5f * k), style = st)
+            PIcon.Rect -> drawRoundRect(tint, p(5f, 5f), Size(14f * k, 14f * k), CornerRadius(1.5f * k), style = st)
             PIcon.Circle -> drawCircle(tint, 8f * k, p(12f, 12f), style = st)
             PIcon.Text -> { line(p(6f, 6f), p(18f, 6f)); line(p(12f, 6f), p(12f, 19f)); line(p(9f, 19f), p(15f, 19f)) }
             PIcon.Eraser -> { drawPath(path { moveTo(4f * k, 15f * k); lineTo(12f * k, 6f * k); lineTo(19f * k, 12f * k); lineTo(12f * k, 20f * k); lineTo(8f * k, 20f * k); close() }, tint, style = st); line(p(8f, 11f), p(15.5f, 17.5f)) }
+            PIcon.Select -> drawPath(path { moveTo(6f * k, 4f * k); lineTo(6f * k, 18f * k); lineTo(10f * k, 14.5f * k); lineTo(13f * k, 20f * k); lineTo(15.5f * k, 18.8f * k); lineTo(12.6f * k, 13.4f * k); lineTo(17.5f * k, 13f * k); close() }, tint, style = st)
+            PIcon.Trash -> {
+                line(p(4f, 7f), p(20f, 7f)); line(p(9f, 7f), p(9f, 4.5f)); line(p(9f, 4.5f), p(15f, 4.5f)); line(p(15f, 4.5f), p(15f, 7f))
+                drawPath(path { moveTo(6f * k, 7f * k); lineTo(7f * k, 20f * k); lineTo(17f * k, 20f * k); lineTo(18f * k, 7f * k) }, tint, style = st)
+                line(p(10f, 11f), p(10f, 16f)); line(p(14f, 11f), p(14f, 16f))
+            }
+            PIcon.Settings -> {
+                drawCircle(tint, 3f * k, p(12f, 12f), style = st)
+                for (i in 0 until 8) {
+                    val a = Math.toRadians(i * 45.0)
+                    val c = kotlin.math.cos(a).toFloat(); val s = kotlin.math.sin(a).toFloat()
+                    line(p(12f + 7.2f * c, 12f + 7.2f * s), p(12f + 9.6f * c, 12f + 9.6f * s))
+                }
+                drawCircle(tint, 7.2f * k, p(12f, 12f), style = st)
+            }
+            PIcon.Palette -> {
+                drawCircle(tint, 8.5f * k, p(12f, 12f), style = st)
+                drawCircle(tint, 1.3f * k, p(8.5f, 10f)); drawCircle(tint, 1.3f * k, p(12f, 7.5f)); drawCircle(tint, 1.3f * k, p(15.5f, 10f))
+            }
+            PIcon.Type -> { line(p(5f, 18f), p(10f, 5f)); line(p(10f, 5f), p(15f, 18f)); line(p(7f, 13f), p(13f, 13f)); line(p(17f, 11f), p(20f, 11f)); line(p(18.5f, 11f), p(18.5f, 18f)) }
+            PIcon.Book -> { drawPath(path { moveTo(12f * k, 6f * k); quadraticTo(8f * k, 4f * k, 4f * k, 5.5f * k); lineTo(4f * k, 18.5f * k); quadraticTo(8f * k, 17f * k, 12f * k, 19f * k); quadraticTo(16f * k, 17f * k, 20f * k, 18.5f * k); lineTo(20f * k, 5.5f * k); quadraticTo(16f * k, 4f * k, 12f * k, 6f * k) }, tint, style = st); line(p(12f, 6f), p(12f, 19f)) }
+            PIcon.Info -> { drawCircle(tint, 8.5f * k, p(12f, 12f), style = st); line(p(12f, 11f), p(12f, 16f)); drawCircle(tint, 1.1f * k, p(12f, 8f)) }
         }
     }
 }
-

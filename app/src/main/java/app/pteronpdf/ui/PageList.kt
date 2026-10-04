@@ -25,7 +25,9 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import app.pteronpdf.pdf.Item
 import app.pteronpdf.pdf.PdfEngine
 import app.pteronpdf.pdf.ReaderViewModel
 import app.pteronpdf.theme.LocalPteron
@@ -36,7 +38,8 @@ const val MAX_ZOOM = 4f
 @Composable
 fun PageList(
     vm: ReaderViewModel, engine: PdfEngine, listState: LazyListState,
-    onText: (Int, PointF) -> Unit, onTapEmpty: () -> Unit,
+    onText: (Int, PointF) -> Unit, onEditText: (Item) -> Unit, onTapEmpty: () -> Unit,
+    topPad: Dp, bottomPad: Dp,
 ) {
     val c = LocalPteron.current
     val density = LocalDensity.current
@@ -120,12 +123,12 @@ fun PageList(
                 LazyColumn(
                     Modifier.width(with(density) { (pageW + 2 * gutterPx).toDp() }).fillMaxHeight(),
                     state = listState,
-                    contentPadding = PaddingValues(top = 84.dp, bottom = 120.dp),
+                    contentPadding = PaddingValues(top = topPad, bottom = bottomPad),
                     verticalArrangement = Arrangement.spacedBy(14.dp),
                     horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
                 ) {
                     items(engine.pageCount, key = { it }) { i ->
-                        PageItem(vm, engine, i, pageW, viewW, onText)
+                        PageItem(vm, engine, i, pageW, viewW, onText, onEditText)
                     }
                 }
             }
@@ -134,7 +137,10 @@ fun PageList(
 }
 
 @Composable
-private fun PageItem(vm: ReaderViewModel, engine: PdfEngine, index: Int, pageW: Int, viewW: Int, onText: (Int, PointF) -> Unit) {
+private fun PageItem(
+    vm: ReaderViewModel, engine: PdfEngine, index: Int, pageW: Int, viewW: Int,
+    onText: (Int, PointF) -> Unit, onEditText: (Item) -> Unit,
+) {
     val density = LocalDensity.current
     val info = engine.pages[index]
     val hPx = (pageW * info.aspect).toInt()
@@ -154,7 +160,7 @@ private fun PageItem(vm: ReaderViewModel, engine: PdfEngine, index: Int, pageW: 
     ) {
         bmp?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.FillBounds) }
         SearchHighlights(vm, index, info.width)
-        MarkupOverlay(vm, index, info.width, onText)
+        MarkupOverlay(vm, index, info.width, onText, onEditText)
     }
 }
 
