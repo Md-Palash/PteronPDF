@@ -73,8 +73,8 @@ class AppSettings(private val p: Prefs) {
 
     fun setTheme(v: Int) { themeIndex = v; p.themeIndex = v }
     fun setDark(v: DarkMode) { darkMode = v; p.darkMode = v }
-    fun setFont(v: AppFont) { font = v; p.font = v }
-    fun setReadingMode(v: Boolean) { readingMode = v; p.readingMode = v }
-    fun setKeepAwake(v: Boolean) { keepAwake = v; p.keepAwake = v }
-    fun setRememberPosition(v: Boolean) { rememberPosition = v; p.rememberPosition = v }
+    fun changeFont(v: AppFont) { font = v; p.font = v }
+    fun changeReadingMode(v: Boolean) { readingMode = v; p.readingMode = v }
+    fun changeKeepAwake(v: Boolean) { keepAwake = v; p.keepAwake = v }
+    fun changeRememberPosition(v: Boolean) { rememberPosition = v; p.rememberPosition = v }
 }
