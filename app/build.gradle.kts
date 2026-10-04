@@ -12,8 +12,8 @@ android {
         applicationId = "app.pteronpdf"
         minSdk = 21
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.1.0"
         // UI is English only: drop the translated strings that Material/AndroidX bring along.
         resourceConfigurations += listOf("en")
     }
@@ -38,7 +38,11 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions { jvmTarget = "17" }
+    kotlinOptions {
+        jvmTarget = "17"
+        // Skip the null-check calls Kotlin inserts into every function: smaller dex, slightly faster on low-end phones.
+        freeCompilerArgs += listOf("-Xno-param-assertions", "-Xno-call-assertions", "-Xno-receiver-assertions")
+    }
     buildFeatures { compose = true }
 
     // One small APK per CPU type instead of one big APK holding all of them. A phone only needs its own,
