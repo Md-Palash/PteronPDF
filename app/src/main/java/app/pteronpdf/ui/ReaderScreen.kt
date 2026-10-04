@@ -344,7 +344,7 @@ private fun EditPanel(vm: ReaderViewModel, onCustomColor: () -> Unit, onEditText
                     Box(
                         Modifier.size(30.dp).clip(CircleShape).background(col)
                             .border(if (on) 3.dp else 1.dp, if (on) c.accent else c.onBar.copy(alpha = 0.2f), CircleShape)
-                            .clickable { vm.setColor(col.toArgb()) }
+                            .clickable { vm.applyColor(col.toArgb()) }
                     )
                 }
                 Box(
@@ -491,7 +491,7 @@ private fun HueSheetContent(vm: ReaderViewModel) {
         val hueBrush = Brush.horizontalGradient((0..6).map { Color.hsv(it * 60f, 0.85f, 0.95f) })
         Box(Modifier.fillMaxWidth().height(28.dp)) {
             Box(Modifier.align(Alignment.Center).fillMaxWidth().height(10.dp).clip(RoundedCornerShape(5.dp)).background(hueBrush))
-            Slider(hue, { hue = it; vm.setColor(Color.hsv(it, 0.85f, 0.95f).toArgb(), coalesce = true) }, valueRange = 0f..360f,
+            Slider(hue, { hue = it; vm.applyColor(Color.hsv(it, 0.85f, 0.95f).toArgb(), coalesce = true) }, valueRange = 0f..360f,
                 colors = SliderDefaults.colors(thumbColor = c.accent, activeTrackColor = Color.Transparent, inactiveTrackColor = Color.Transparent))
         }
         Spacer(Modifier.height(16.dp))

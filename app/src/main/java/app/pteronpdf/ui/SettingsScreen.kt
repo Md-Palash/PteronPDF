@@ -80,11 +80,11 @@ fun SettingsScreen(settings: AppSettings, onClose: () -> Unit) {
                 }
 
                 Section.Reading -> OptionsCard {
-                    ToggleRow("Reading mode", "Hide the top bar until you tap the page", settings.readingMode, settings::setReadingMode)
+                    ToggleRow("Reading mode", "Hide the top bar until you tap the page", settings.readingMode, settings::changeReadingMode)
                     OptionDivider()
-                    ToggleRow("Keep screen awake", "Don't let the screen turn off while reading", settings.keepAwake, settings::setKeepAwake)
+                    ToggleRow("Keep screen awake", "Don't let the screen turn off while reading", settings.keepAwake, settings::changeKeepAwake)
                     OptionDivider()
-                    ToggleRow("Remember reading position", "Reopen each PDF on the page you left", settings.rememberPosition, settings::setRememberPosition)
+                    ToggleRow("Remember reading position", "Reopen each PDF on the page you left", settings.rememberPosition, settings::changeRememberPosition)
                 }
 
                 Section.About -> OptionsCard {
@@ -105,7 +105,7 @@ fun SettingsScreen(settings: AppSettings, onClose: () -> Unit) {
         ThemeSheetContent(settings.themeIndex, settings.darkMode, settings::setTheme, settings::setDark)
     }
     if (showFont) ModalBottomSheet(onDismissRequest = { showFont = false }, containerColor = c.bar) {
-        FontSheetContent(settings.font) { settings.setFont(it); showFont = false }
+        FontSheetContent(settings.font) { settings.changeFont(it); showFont = false }
     }
     if (showPrivacy) AlertDialog(
         onDismissRequest = { showPrivacy = false },
