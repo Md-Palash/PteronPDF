@@ -29,6 +29,8 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.AwaitPointerEventScope
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import app.pteronpdf.pdf.Geom
 import app.pteronpdf.pdf.Item
@@ -54,6 +56,7 @@ fun MarkupOverlay(
     val dens = LocalDensity.current.density
     val tool = vm.tool
     var live by remember { mutableStateOf<Markup?>(null) }
+    var coords by remember { mutableStateOf<LayoutCoordinates?>(null) }
 
     val input = if (tool == Tool.None) Modifier else Modifier.pointerInput(tool, pageIndex) {
         awaitEachGesture {
@@ -88,24 +91,60 @@ fun MarkupOverlay(
                     } else {
                         val wasSelected = vm.selectedId == hit.id
                         vm.select(hit.id); down.consume()
-                        var cur = hit; var moved = false
-                        val cancelled = trackDrag(true) { pos, _ ->
-                            if (movedFar(pos, 8f)) moved = true
-                            if (moved && Geom.movable(hit.m)) {
-                                val a = toPdf(down.position); val b = toPdf(pos)
-                                cur = hit.copy(m = Geom.move(hit.m, b.x - a.x, b.y - a.y)); vm.liveEdit(cur)
+                        var cur = hit; var moved = false; var finished = false
+                        // The mark is tracked in ROOT (screen) coordinates, so it stays under the finger while the list
+                        // scrolls and lands on whichever page its centre is over when you let go.
+                        val lc = coords
+                        val srcRoot = vm.pageRoots[pageIndex]
+                        val b0 = Geom.bounds(hit.m)
+                        val downRoot = lc?.localToRoot(down.position) ?: down.position
+                        val tl0 = if (srcRoot != null) Offset(srcRoot.left + b0.left * s, srcRoot.top + b0.top * s) else Offset.Zero
+                        var ptr = downRoot
+                        var lastLocal = down.position
+                        var target = pageIndex
+                        fun place() {
+                            val e = vm.engine
+                            if (e == null || srcRoot == null) {            // layout unknown: stay on this page
+                                val a = toPdf(down.position); val b = toPdf(lastLocal)
+                                cur = hit.copy(m = Geom.move(hit.m, b.x - a.x, b.y - a.y)); vm.liveEdit(cur); return
                             }
+                            val tl = Offset(tl0.x + (ptr.x - downRoot.x), tl0.y + (ptr.y - downRoot.y))
+                            val centre = Offset(tl.x + b0.width() * s / 2, tl.y + b0.height() * s / 2)
+                            vm.pageAt(centre)?.let { if (it < e.pageCount) target = it }
+                            val r = vm.pageRoots[target] ?: srcRoot
+                            val info = e.pages[target]
+                            val st = r.width / info.width
+                            val moved0 = Geom.move(hit.m, (tl.x - r.left) / st - b0.left, (tl.y - r.top) / st - b0.top)
+                            cur = hit.copy(page = target, m = Geom.clampInto(moved0, info.width, info.height))
+                            vm.liveEdit(cur)
                         }
-                        if (!cancelled && moved && cur.m != hit.m) vm.commitEdit(hit, cur)
-                        else {
-                            vm.liveEdit(null)
-                            // tapping an already-selected text box edits its text
-                            if (!cancelled && !moved && wasSelected && hit.m is Markup.Text) onEditText(hit)
+                        fun autoScroll() {
+                            val zone = 48f * dens; val speed = 14f * dens
+                            if (ptr.y < vm.autoScrollTop) vm.edgeScroll(-speed * ((vm.autoScrollTop - ptr.y) / zone).coerceIn(0.2f, 1f))
+                            else if (ptr.y > vm.autoScrollBottom) vm.edgeScroll(speed * ((ptr.y - vm.autoScrollBottom) / zone).coerceIn(0.2f, 1f))
+                        }
+                        try {
+                            val cancelled = trackDrag(true, onTick = { if (moved) { autoScroll(); place() } }) { pos, _ ->
+                                lastLocal = pos
+                                ptr = lc?.localToRoot(pos) ?: pos
+                                if (movedFar(pos, 8f)) moved = true
+                                if (moved) place()
+                            }
+                            finished = true
+                            if (!cancelled && moved && (cur.m != hit.m || cur.page != hit.page)) vm.commitEdit(hit, cur)
+                            else {
+                                vm.liveEdit(null)
+                                // tapping an already-selected text box edits its text
+                                if (!cancelled && !moved && wasSelected && hit.m is Markup.Text) onEditText(hit)
+                            }
+                        } finally {
+                            // The gesture can be torn down mid-drag (its page scrolled out of the list): keep the move, never leave a ghost.
+                            if (!finished) { if (moved && (cur.m != hit.m || cur.page != hit.page)) vm.commitEdit(hit, cur) else vm.liveEdit(null) }
                         }
                     }
                 }
 
-                Tool.Pen, Tool.Line, Tool.Curve, Tool.Arrow, Tool.Rect, Tool.Circle -> {
+                Tool.Pen, Tool.Highlighter, Tool.Line, Tool.Curve, Tool.Arrow, Tool.Rect, Tool.Circle -> {
                     vm.select(null)
                     val col = vm.color
                     val w = vm.widths[tool] ?: 2f
@@ -114,33 +153,17 @@ fun MarkupOverlay(
                     var end = down.position
                     val cancelled = trackDrag(true) { pos, _ ->
                         end = pos
-                        if (tool == Tool.Pen) pts += toPdf(pos)
+                        if (tool == Tool.Pen || tool == Tool.Highlighter) pts += toPdf(pos)
                         live = buildMarkup(tool, start, toPdf(pos), pts, col, w)
                     }
                     live = null
                     if (!cancelled) {
                         val far = movedFar(end, 10f)
-                        if (tool == Tool.Pen) {
-                            if (pts.size >= 2) vm.addMarkup(pageIndex, Markup.Ink(pts.toList(), col, w, 1f), selectIt = false)
+                        if (tool == Tool.Pen || tool == Tool.Highlighter) {
+                            buildMarkup(tool, start, toPdf(end), pts, col, w)?.let { vm.addMarkup(pageIndex, it, selectIt = false) }
                         } else if (far) {
                             buildMarkup(tool, start, toPdf(end), pts, col, w)?.let { vm.addMarkup(pageIndex, it) }
                         }
-                    }
-                }
-
-                Tool.Highlight -> {
-                    down.consume()
-                    val start = toPdf(down.position)
-                    var last = 0L
-                    var endPos = down.position
-                    val cancelled = trackDrag(true) { pos, t ->
-                        endPos = pos
-                        if (t - last > 60) { last = t; vm.previewTextSelection(pageIndex, start, toPdf(pos)) }
-                    }
-                    if (cancelled) vm.clearTextSelection() else {
-                        // final position (the throttle may have skipped it), then commit once that selection is ready
-                        vm.previewTextSelection(pageIndex, start, toPdf(endPos))
-                        vm.commitTextSelection()
                     }
                 }
 
@@ -171,25 +194,27 @@ fun MarkupOverlay(
         }
     }
 
-    Canvas(Modifier.fillMaxSize().then(input)) {
+    Canvas(Modifier.fillMaxSize().onGloballyPositioned { coords = it }.then(input)) {
         val s = size.width / pageWidthPdf
         val preview = vm.preview
         val selId = vm.selectedId
-        vm.items.forEach { it0 ->
-            if (it0.page != pageIndex) return@forEach
-            val it = if (preview != null && preview.id == it0.id) preview else it0
-            drawMarkup(it.m, s)
-            if (it.id == selId) drawSelection(it.m, s, c.accent, dens, withHandles = true)
+        vm.items.forEach { stored ->
+            if (stored.page != pageIndex) return@forEach
+            if (preview != null && preview.id == stored.id) return@forEach      // being dragged: painted below, wherever it is
+            drawMarkup(stored.m, s)
+            if (stored.id == selId) drawSelection(stored.m, s, c.accent, dens, withHandles = true)
+        }
+        // the mark being moved or resized is painted on the page it is currently over (can differ from its stored page)
+        if (preview != null && preview.page == pageIndex) {
+            drawMarkup(preview.m, s)
+            if (preview.id == selId) drawSelection(preview.m, s, c.accent, dens, withHandles = true)
         }
         live?.let { drawMarkup(it, s) }
-        if (vm.selPage == pageIndex) vm.selRects.forEach { r ->
-            drawRect(Color(vm.color).copy(alpha = 0.35f), Offset(r.left * s, r.top * s), Size(r.width() * s, r.height() * s))
-        }
     }
 }
 
 private fun buildMarkup(tool: Tool, a: PointF, b: PointF, pts: List<PointF>, color: Int, w: Float): Markup? = when (tool) {
-    Tool.Pen -> if (pts.size >= 2) Markup.Ink(pts.toList(), color, w, 1f) else null
+    Tool.Pen, Tool.Highlighter -> if (pts.size >= 2) Markup.Ink(pts.toList(), color, w, if (tool == Tool.Highlighter) 0.35f else 1f) else null
     Tool.Line -> Markup.Shape(ShapeKind.Line, a, b, color, w)
     Tool.Arrow -> Markup.Shape(ShapeKind.Arrow, a, b, color, w)
     Tool.Rect -> Markup.Shape(ShapeKind.Rect, a, b, color, w)
@@ -214,9 +239,14 @@ private fun handleAt(m: Markup, p: PointF, tol: Float): Int {
 }
 
 /** Tracks one finger. Returns true if a second finger arrived (the gesture was cancelled). */
-private suspend fun AwaitPointerEventScope.trackDrag(consume: Boolean, onMove: (Offset, Long) -> Unit): Boolean {
+private suspend fun AwaitPointerEventScope.trackDrag(
+    consume: Boolean, onTick: (() -> Unit)? = null, onMove: (Offset, Long) -> Unit,
+): Boolean {
     while (true) {
-        val ev = awaitPointerEvent(PointerEventPass.Main)
+        // With a tick handler we also wake every ~16 ms while the finger is held still (edge auto-scroll needs that).
+        val ev = if (onTick == null) awaitPointerEvent(PointerEventPass.Main)
+        else withTimeoutOrNull(16) { awaitPointerEvent(PointerEventPass.Main) }
+        if (ev == null) { onTick?.invoke(); continue }
         if (ev.changes.count { it.pressed } > 1) return true
         val ch = ev.changes.firstOrNull() ?: return false
         if (!ch.pressed) return false
@@ -229,9 +259,6 @@ private suspend fun AwaitPointerEventScope.trackDrag(consume: Boolean, onMove: (
 
 private fun DrawScope.drawMarkup(m: Markup, s: Float) {
     when (m) {
-        is Markup.Highlight -> m.rects.forEach { r ->
-            drawRect(Color(m.color).copy(alpha = 0.38f), Offset(r.left * s, r.top * s), Size(r.width() * s, r.height() * s))
-        }
         is Markup.Text -> drawText(m, s)
         is Markup.Ink -> {
             val pts = m.pts

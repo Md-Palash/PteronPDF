@@ -19,7 +19,7 @@ import androidx.compose.ui.semantics.semantics
  * material-icons-extended (~10 MB of classes) in the APK.
  */
 enum class PIcon { Back, Open, Save, Search, Up, Down, Close, Undo, Redo, Edit, Grid, Theme, Pen, Highlighter,
-    Line, Curve, Arrow, Rect, Circle, Text, Eraser, Check, More, Select, Settings, Trash, Chevron, Palette, Type, Book, Info }
+    Line, Curve, Arrow, Rect, Circle, Text, Eraser, Check, More, Select, Settings, Trash, Chevron, Palette, Type, Book, Info, Moon, Sun }
 
 @Composable
 fun PIconView(icon: PIcon, tint: Color, modifier: Modifier = Modifier.size(22.dp), desc: String? = null) {
@@ -72,13 +72,36 @@ fun PIconView(icon: PIcon, tint: Color, modifier: Modifier = Modifier.size(22.dp
                 line(p(10f, 11f), p(10f, 16f)); line(p(14f, 11f), p(14f, 16f))
             }
             PIcon.Settings -> {
-                drawCircle(tint, 3f * k, p(12f, 12f), style = st)
-                for (i in 0 until 8) {
-                    val a = Math.toRadians(i * 45.0)
-                    val c = kotlin.math.cos(a).toFloat(); val s = kotlin.math.sin(a).toFloat()
-                    line(p(12f + 7.2f * c, 12f + 7.2f * s), p(12f + 9.6f * c, 12f + 9.6f * s))
+                // 8-tooth gear outline with a round hole
+                val gear = path {
+                    for (i in 0 until 8) {
+                        val base = Math.toRadians(i * 45.0)
+                        fun gp(offDeg: Double, r: Float) = Offset(
+                            (12f + r * kotlin.math.cos(base + Math.toRadians(offDeg)).toFloat()) * k,
+                            (12f + r * kotlin.math.sin(base + Math.toRadians(offDeg)).toFloat()) * k,
+                        )
+                        val a1 = gp(-13.0, 7.6f); val a2 = gp(-8.0, 10.3f); val a3 = gp(8.0, 10.3f); val a4 = gp(13.0, 7.6f)
+                        if (i == 0) moveTo(a1.x, a1.y) else lineTo(a1.x, a1.y)
+                        lineTo(a2.x, a2.y); lineTo(a3.x, a3.y); lineTo(a4.x, a4.y)
+                    }
+                    close()
                 }
-                drawCircle(tint, 7.2f * k, p(12f, 12f), style = st)
+                drawPath(gear, tint, style = st)
+                drawCircle(tint, 3.2f * k, p(12f, 12f), style = st)
+            }
+            PIcon.Moon -> {
+                // crescent = big disc minus a smaller disc shifted to the upper right
+                val outer = Path().apply { addOval(androidx.compose.ui.geometry.Rect(p(3.5f, 3.5f), Size(17f * k, 17f * k))) }
+                val bite = Path().apply { addOval(androidx.compose.ui.geometry.Rect(p(9.5f, 0.5f), Size(15f * k, 15f * k))) }
+                drawPath(Path.combine(PathOperation.Difference, outer, bite), tint, style = st)
+            }
+            PIcon.Sun -> {
+                drawCircle(tint, 4.3f * k, p(12f, 12f), style = st)
+                for (i in 0 until 8) {
+                    val ang = Math.toRadians(i * 45.0)
+                    val cs = kotlin.math.cos(ang).toFloat(); val sn = kotlin.math.sin(ang).toFloat()
+                    line(p(12f + 7.4f * cs, 12f + 7.4f * sn), p(12f + 10f * cs, 12f + 10f * sn))
+                }
             }
             PIcon.Palette -> {
                 drawCircle(tint, 8.5f * k, p(12f, 12f), style = st)

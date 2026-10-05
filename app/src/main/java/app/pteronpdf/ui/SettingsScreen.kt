@@ -82,6 +82,8 @@ fun SettingsScreen(settings: AppSettings, onClose: () -> Unit) {
                 Section.Reading -> OptionsCard {
                     ToggleRow("Reading mode", "Hide the top bar until you tap the page", settings.readingMode, settings::changeReadingMode)
                     OptionDivider()
+                    ToggleRow("Eye protection", "Warmer, softer colours with less blue light", settings.eyeProtection, settings::changeEyeProtection)
+                    OptionDivider()
                     ToggleRow("Keep screen awake", "Don't let the screen turn off while reading", settings.keepAwake, settings::changeKeepAwake)
                     OptionDivider()
                     ToggleRow("Remember reading position", "Reopen each PDF on the page you left", settings.rememberPosition, settings::changeRememberPosition)

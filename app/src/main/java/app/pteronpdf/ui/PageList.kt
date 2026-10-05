@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -23,10 +24,13 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.toSize
 import app.pteronpdf.pdf.Item
 import app.pteronpdf.pdf.PdfEngine
 import app.pteronpdf.pdf.ReaderViewModel
@@ -54,9 +58,19 @@ fun PageList(
     // Page width in px at the committed zoom
     val pageW = if (viewW == 0) 0 else ((viewW - 2 * gutterPx) * vm.zoom).toInt()
 
+    // Lets a mark that is being dragged scroll the list when the finger nears the top or the editing card.
+    val topPx = with(density) { topPad.toPx() }
+    val bottomPx = with(density) { bottomPad.toPx() }
+    SideEffect { vm.edgeScroll = { dy -> scope.launch { listState.scrollBy(dy) } } }
+
     Box(
         Modifier.fillMaxSize().background(c.canvas)
             .onSizeChanged { viewW = it.width; viewH = it.height }
+            .onGloballyPositioned {
+                val top = it.positionInRoot().y
+                vm.autoScrollTop = top + topPx + 16f * density.density
+                vm.autoScrollBottom = top + it.size.height - bottomPx
+            }
             .pointerInput(Unit) {
                 awaitEachGesture {
                     awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
@@ -154,8 +168,10 @@ private fun PageItem(
         bmp = vm.cached(index, renderW) ?: vm.render(index, renderW) ?: bmp
     }
 
+    DisposableEffect(index) { onDispose { vm.pageRoots.remove(index) } }
     Box(
         Modifier.size(with(density) { pageW.toDp() }, with(density) { hPx.toDp() })
+            .onGloballyPositioned { vm.pageRoots[index] = Rect(it.positionInRoot(), it.size.toSize()) }
             .shadow(5.dp, RoundedCornerShape0).background(Color.White)
     ) {
         bmp?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.FillBounds) }

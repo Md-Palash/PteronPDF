@@ -66,6 +66,7 @@ fun ReaderScreen(vm: ReaderViewModel, settings: AppSettings, onClose: () -> Unit
     var showColor by remember { mutableStateOf(false) }
     var showMenu by remember { mutableStateOf(false) }
     var showUnsaved by remember { mutableStateOf(false) }
+    var deleteIndex by remember { mutableStateOf<Int?>(null) }
     var textRequest by remember { mutableStateOf<TextReq?>(null) }
     val editing = vm.tool != Tool.None
     // Reading mode: the bar hides until you tap the page. Otherwise the bar is always there.
@@ -163,18 +164,28 @@ fun ReaderScreen(vm: ReaderViewModel, settings: AppSettings, onClose: () -> Unit
                 if (searchOpen) SearchRow(vm, onClose = { searchOpen = false; vm.clearSearch() })
                 else {
                     BarIconButton(PIcon.Back, "Back", ::requestClose)
-                    BarIconButton(PIcon.Search, "Search", { searchOpen = true })
-                    Spacer(Modifier.weight(1f))
-                    if (vm.dirty) Box(Modifier.padding(end = 8.dp).size(7.dp).clip(CircleShape).background(c.accent))
+                    // the name takes whatever room is left and is cut off with … when it doesn't fit
+                    Text(
+                        vm.name, Modifier.weight(1f).padding(horizontal = 4.dp),
+                        fontSize = 15.sp, fontWeight = FontWeight.Medium, color = c.onBar,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    )
+                    if (vm.dirty) Box(Modifier.padding(horizontal = 4.dp).size(7.dp).clip(CircleShape).background(c.accent))
                     if (engine != null) Text(
                         "${vm.currentPage + 1}/${engine.pageCount}",
                         fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = c.onBar,
+                        modifier = Modifier.padding(horizontal = 4.dp),
                     )
-                    Spacer(Modifier.width(4.dp))
+                    BarIconButton(
+                        PIcon.Trash, "Delete this page", { deleteIndex = vm.currentPage },
+                        enabled = engine != null && engine.pageCount > 1,
+                    )
+                    BarIconButton(PIcon.Search, "Search", { searchOpen = true })
                     Box {
                         BarIconButton(PIcon.More, "More", { showMenu = true })
                         DropdownMenu(
                             expanded = showMenu, onDismissRequest = { showMenu = false },
+                            modifier = Modifier.width(230.dp),
                             shape = RoundedCornerShape(20.dp), containerColor = c.bar,
                         ) {
                             DropdownMenuItem(text = { Text("Pages") }, onClick = { showMenu = false; showThumbs = true })
@@ -238,6 +249,15 @@ fun ReaderScreen(vm: ReaderViewModel, settings: AppSettings, onClose: () -> Unit
             },
         )
     }
+    deleteIndex?.let { idx ->
+        AlertDialog(
+            onDismissRequest = { deleteIndex = null },
+            title = { Text("Delete page ${idx + 1}?") },
+            text = { Text("The page, and any markup on it, is removed from the PDF. The file itself only changes when you save, and the undo history is cleared.") },
+            confirmButton = { TextButton({ deleteIndex = null; vm.deletePage(idx) }) { Text("Delete") } },
+            dismissButton = { TextButton({ deleteIndex = null }) { Text("Cancel") } },
+        )
+    }
     if (showUnsaved) AlertDialog(
         onDismissRequest = { showUnsaved = false },
         title = { Text("Save your markup?") },
@@ -286,7 +306,7 @@ private data class ToolDef(val tool: Tool, val icon: PIcon, val label: String)
 private val ToolDefs = listOf(
     ToolDef(Tool.Select, PIcon.Select, "Select"),
     ToolDef(Tool.Pen, PIcon.Pen, "Pen"),
-    ToolDef(Tool.Highlight, PIcon.Highlighter, "Highlight"),
+    ToolDef(Tool.Highlighter, PIcon.Highlighter, "Highlighter"),
     ToolDef(Tool.Line, PIcon.Line, "Line"),
     ToolDef(Tool.Curve, PIcon.Curve, "Curve"),
     ToolDef(Tool.Arrow, PIcon.Arrow, "Arrow"),
@@ -305,9 +325,12 @@ private fun EditPanel(vm: ReaderViewModel, onCustomColor: () -> Unit, onEditText
     val selText = sel?.m as? Markup.Text
     val showText = tool == Tool.Text || selText != null
     val widthNow = vm.currentWidth()
-    val showWidth = !showText && widthNow != null && tool != Tool.Erase && tool != Tool.Highlight
+    val showWidth = !showText && widthNow != null && tool != Tool.Erase
     val activeColor = sel?.m?.color ?: vm.color
-    val swatches = if (tool == Tool.Highlight || sel?.m is Markup.Highlight) HighlightSwatches else PenSwatches
+    // a highlighter stroke is an ink stroke with some transparency; it gets its own colours and a wider thickness range
+    val selInk = sel?.m as? Markup.Ink
+    val isHighlighter = if (sel != null) selInk != null && selInk.opacity < 1f else tool == Tool.Highlighter
+    val swatches = if (isHighlighter) HighlightSwatches else PenSwatches
 
     Column(
         Modifier.fillMaxWidth().shadow(14.dp, shape).clip(shape).background(c.bar)
@@ -357,7 +380,7 @@ private fun EditPanel(vm: ReaderViewModel, onCustomColor: () -> Unit, onEditText
 
         // thickness / text options / hints
         when {
-            showWidth -> LabeledSlider("Thickness", widthNow!!, 0.5f..12f) { vm.setWidth(it) }
+            showWidth -> LabeledSlider("Thickness", widthNow!!, if (isHighlighter) 4f..40f else 0.5f..12f) { vm.setWidth(it) }
             showText -> {
                 val size = selText?.fontSize ?: vm.textSize
                 val bold = selText?.bold ?: vm.textBold
@@ -368,7 +391,6 @@ private fun EditPanel(vm: ReaderViewModel, onCustomColor: () -> Unit, onEditText
                     if (sel == null) Text("Tap the page to place a comment", fontSize = 12.sp, color = c.onBar.copy(alpha = 0.6f))
                 }
             }
-            tool == Tool.Highlight -> Hint("Drag across text to highlight it")
             tool == Tool.Select && sel == null -> Hint("Tap a mark to select it, then drag to move or use the dots to resize")
             tool == Tool.Erase -> Hint("Tap or drag over a mark to erase it")
         }

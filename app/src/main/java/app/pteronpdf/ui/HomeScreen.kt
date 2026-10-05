@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.sp
 import app.pteronpdf.data.AppSettings
 import app.pteronpdf.data.Prefs
 import app.pteronpdf.data.RecentDoc
+import app.pteronpdf.theme.DarkMode
 import app.pteronpdf.theme.LocalPteron
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -31,7 +32,6 @@ fun HomeScreen(prefs: Prefs, settings: AppSettings, onOpen: (Uri) -> Unit, onSet
     val c = LocalPteron.current
     val ctx = LocalContext.current
     val recents by remember { mutableStateOf(prefs.recents()) }
-    var showTheme by remember { mutableStateOf(false) }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -49,7 +49,12 @@ fun HomeScreen(prefs: Prefs, settings: AppSettings, onOpen: (Uri) -> Unit, onSet
         Column(Modifier.fillMaxSize().padding(horizontal = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End) {
                 PillCard {
-                    BarIconButton(PIcon.Theme, "Theme", { showTheme = true })
+                    // shows what you will switch TO: a moon while the app is light, a sun while it is dark
+                    BarIconButton(
+                        if (c.isDark) PIcon.Sun else PIcon.Moon,
+                        if (c.isDark) "Switch to light mode" else "Switch to dark mode",
+                        { settings.setDark(if (c.isDark) DarkMode.Light else DarkMode.Dark) },
+                    )
                     BarIconButton(PIcon.Settings, "Settings", onSettings)
                 }
             }
@@ -83,9 +88,6 @@ fun HomeScreen(prefs: Prefs, settings: AppSettings, onOpen: (Uri) -> Unit, onSet
             }
             Spacer(Modifier.height(16.dp))
         }
-    }
-    if (showTheme) ModalBottomSheet(onDismissRequest = { showTheme = false }, containerColor = c.bar) {
-        ThemeSheetContent(settings.themeIndex, settings.darkMode, settings::setTheme, settings::setDark)
     }
 }
 
