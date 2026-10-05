@@ -14,6 +14,8 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import app.pteronpdf.data.Prefs
@@ -49,7 +51,7 @@ class ReaderViewModel(app: Application, val uri: Uri) : AndroidViewModel(app) {
     var color by mutableIntStateOf(0xFF0A84FF.toInt()); private set
     /** Stroke width per tool, in PDF points. */
     val widths = mutableStateMapOf(
-        Tool.Pen to 1.4f, Tool.Line to 2f, Tool.Curve to 2f, Tool.Arrow to 2f, Tool.Rect to 2f, Tool.Circle to 2f,
+        Tool.Pen to 1.4f, Tool.Highlighter to 12f, Tool.Line to 2f, Tool.Curve to 2f, Tool.Arrow to 2f, Tool.Rect to 2f, Tool.Circle to 2f,
     )
     var textSize by mutableFloatStateOf(14f)     // PDF points
     var textBold by mutableStateOf(false)
@@ -66,8 +68,17 @@ class ReaderViewModel(app: Application, val uri: Uri) : AndroidViewModel(app) {
     val redoStack = mutableStateListOf<HistoryEntry>()
 
     private val pageVersions = mutableStateOf<Map<Int, Int>>(emptyMap())
-    fun pageVersion(i: Int) = pageVersions.value[i] ?: 0
-    private fun bump(i: Int) { pageVersions.value = pageVersions.value + (i to pageVersion(i) + 1) }
+    /** Bumps when every page image is stale (a page was deleted, or the file was re-opened after saving). */
+    private var epoch by mutableIntStateOf(0)
+    fun pageVersion(i: Int) = (pageVersions.value[i] ?: 0) + epoch * 10_000
+    private fun bump(i: Int) { pageVersions.value = pageVersions.value + (i to (pageVersions.value[i] ?: 0) + 1) }
+
+    // ── page layout in root coordinates, filled by PageList: lets a dragged mark find the page under the finger ──
+    val pageRoots = HashMap<Int, Rect>()
+    var autoScrollTop = 0f      // while dragging, the list scrolls when the finger goes above this (root y)…
+    var autoScrollBottom = 0f   // …or below this
+    var edgeScroll: (Float) -> Unit = {}
+    fun pageAt(p: Offset): Int? = pageRoots.entries.firstOrNull { it.value.contains(p) }?.key
 
     // ── search state ──
     var query by mutableStateOf("")
@@ -129,14 +140,13 @@ class ReaderViewModel(app: Application, val uri: Uri) : AndroidViewModel(app) {
     private var inkColor = color
     private var highlightColor = 0xFFFFD60A.toInt()
 
-    /** The text highlighter keeps its own colour (yellow by default) so switching tools doesn't turn pens yellow. */
+    /** The highlighter keeps its own colour (yellow by default) so switching tools doesn't turn pens yellow. */
     fun chooseTool(t: Tool) {
-        val wasHl = tool == Tool.Highlight; val toHl = t == Tool.Highlight
+        val wasHl = tool == Tool.Highlighter; val toHl = t == Tool.Highlighter
         if (!wasHl && toHl) { inkColor = color; color = highlightColor }
         else if (wasHl && !toHl) { highlightColor = color; color = inkColor }
         tool = t
         if (t != Tool.Select) selectedId = null
-        clearTextSelection()
     }
 
     fun select(id: Long?) { selectedId = id }
@@ -200,7 +210,7 @@ class ReaderViewModel(app: Application, val uri: Uri) : AndroidViewModel(app) {
     }
 
     private fun toolForSelected(): Tool? = when (val m = selected?.m) {
-        is Markup.Ink -> Tool.Pen
+        is Markup.Ink -> if (m.opacity < 1f) Tool.Highlighter else Tool.Pen
         is Markup.Curve -> Tool.Curve
         is Markup.Shape -> when (m.kind) {
             ShapeKind.Line -> Tool.Line; ShapeKind.Arrow -> Tool.Arrow; ShapeKind.Rect -> Tool.Rect; ShapeKind.Circle -> Tool.Circle
@@ -252,32 +262,27 @@ class ReaderViewModel(app: Application, val uri: Uri) : AndroidViewModel(app) {
         }
     }
 
-    // ───────── text highlight (live preview while dragging) ─────────
-    var selPage by mutableIntStateOf(-1); private set
-    var selRects by mutableStateOf<List<RectF>>(emptyList()); private set
-    private var selJob: Job? = null
-
-    fun previewTextSelection(page: Int, a: PointF, b: PointF) {
+    // ───────── delete page ─────────
+    /** Removes page [index] from the open PDF (written to the file on Save). Markup on it goes too; later pages shift up. */
+    fun deletePage(index: Int) {
         val e = engine ?: return
-        selJob?.cancel()
-        selJob = viewModelScope.launch {
-            val r = e.selectText(page, a, b)
-            selPage = page; selRects = r
-        }
-    }
-
-    fun commitTextSelection() {
-        val job = selJob
-        val page = selPage
+        if (e.pageCount <= 1) { message = "A PDF needs at least one page"; return }
         viewModelScope.launch {
-            job?.join()
-            val r = selRects
-            if (r.isNotEmpty() && selPage >= 0) addMarkup(page, Markup.Highlight(r, color))
-            clearTextSelection()
+            try {
+                e.deletePage(index)
+                items.removeAll { it.page == index }
+                for (i in items.indices) if (items[i].page > index) items[i] = items[i].copy(page = items[i].page - 1)
+                // history refers to old page numbers, so it can't be replayed safely any more
+                undoStack.clear(); redoStack.clear()
+                selectedId = null; preview = null
+                clearSearch()
+                cache.evictAll(); pageVersions.value = emptyMap(); epoch++
+                currentPage = currentPage.coerceIn(0, e.pageCount - 1)
+                engineEdited = true; editCount++
+                message = "Page ${index + 1} deleted"
+            } catch (t: Throwable) { message = "Couldn't delete page: ${t.message}" }
         }
     }
-
-    fun clearTextSelection() { selJob?.cancel(); selPage = -1; selRects = emptyList() }
 
     // ───────── undo / redo ─────────
     fun undo() {
@@ -352,7 +357,7 @@ class ReaderViewModel(app: Application, val uri: Uri) : AndroidViewModel(app) {
         cache.evictAll()
         items.clear(); undoStack.clear(); redoStack.clear()
         selectedId = null; preview = null
-        pageVersions.value = emptyMap()
+        pageVersions.value = emptyMap(); epoch++
         savedAt = editCount; engineEdited = false
         message = "Saved"
         old?.close()

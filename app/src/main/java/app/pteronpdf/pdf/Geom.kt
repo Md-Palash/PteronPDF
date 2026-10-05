@@ -47,7 +47,7 @@ object Geom {
             val t = i / CURVE_STEPS.toFloat(); val u = 1 - t
             PointF(u * u * m.p0.x + 2 * u * t * m.c.x + t * t * m.p1.x, u * u * m.p0.y + 2 * u * t * m.c.y + t * t * m.p1.y)
         })
-        is Markup.Text, is Markup.Highlight -> emptyList()
+        is Markup.Text -> emptyList()
     }
 
     fun widthOf(m: Markup): Float? = when (m) {
@@ -62,7 +62,6 @@ object Geom {
 
     fun bounds(m: Markup): RectF = when (m) {
         is Markup.Text -> RectF(m.rect)
-        is Markup.Highlight -> RectF(m.rects.first()).also { u -> m.rects.drop(1).forEach { u.union(it) } }
         else -> {
             val pts = strokes(m).flatten()
             RectF(pts.minOf { it.x }, pts.minOf { it.y }, pts.maxOf { it.x }, pts.maxOf { it.y })
@@ -80,7 +79,6 @@ object Geom {
 
     fun hit(m: Markup, p: PointF, tol: Float): Boolean = when (m) {
         is Markup.Text -> RectF(m.rect).apply { inset(-tol, -tol) }.contains(p.x, p.y)
-        is Markup.Highlight -> m.rects.any { RectF(it).apply { inset(-tol / 2, -tol / 2) }.contains(p.x, p.y) }
         else -> {
             val reach = tol + (widthOf(m) ?: 0f) / 2
             strokes(m).any { line -> line.zipWithNext().any { (a, b) -> distToSeg(p, a, b) <= reach } }
@@ -97,7 +95,6 @@ object Geom {
     fun handles(m: Markup): List<PointF> = when (m) {
         is Markup.Shape -> if (m.kind == ShapeKind.Line || m.kind == ShapeKind.Arrow) listOf(m.p0, m.p1) else corners(bounds(m))
         is Markup.Curve -> listOf(m.p0, curveMid(m), m.p1)
-        is Markup.Highlight -> emptyList()
         else -> corners(bounds(m))
     }
 
@@ -110,7 +107,6 @@ object Geom {
             2 -> m.copy(p1 = to)
             else -> m.copy(c = PointF(2 * to.x - 0.5f * (m.p0.x + m.p1.x), 2 * to.y - 0.5f * (m.p0.y + m.p1.y)))
         }
-        is Markup.Highlight -> m
         else -> fit(m, bounds(m), newRect(bounds(m), i, to))
     }
 
@@ -138,8 +134,6 @@ object Geom {
     }
 
     // ───────── move ─────────
-    fun movable(m: Markup) = m !is Markup.Highlight
-
     private fun mv(p: PointF, dx: Float, dy: Float) = PointF(p.x + dx, p.y + dy)
 
     fun move(m: Markup, dx: Float, dy: Float): Markup = when (m) {
@@ -147,7 +141,14 @@ object Geom {
         is Markup.Shape -> m.copy(p0 = mv(m.p0, dx, dy), p1 = mv(m.p1, dx, dy))
         is Markup.Curve -> m.copy(p0 = mv(m.p0, dx, dy), c = mv(m.c, dx, dy), p1 = mv(m.p1, dx, dy))
         is Markup.Text -> m.copy(rect = RectF(m.rect).apply { offset(dx, dy) })
-        is Markup.Highlight -> m
+    }
+
+    /** Shifts [m] the least amount needed to sit fully inside a page of [pageW] x [pageH] points (page edge wins if it is bigger). */
+    fun clampInto(m: Markup, pageW: Float, pageH: Float): Markup {
+        val b = bounds(m)
+        val dx = if (b.width() >= pageW) -b.left else min(max(b.left, 0f), pageW - b.width()) - b.left
+        val dy = if (b.height() >= pageH) -b.top else min(max(b.top, 0f), pageH - b.height()) - b.top
+        return if (dx == 0f && dy == 0f) m else move(m, dx, dy)
     }
 
     /** Initial box for a new text note, sized roughly to its content. */

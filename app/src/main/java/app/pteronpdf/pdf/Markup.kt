@@ -12,7 +12,7 @@ sealed interface Markup {
     val color: Int   // ARGB
     fun withColor(c: Int): Markup
 
-    /** Freehand writing pen. */
+    /** Freehand stroke: the writing pen (opacity 1) or the highlighter (wide, opacity below 1). */
     data class Ink(val pts: List<PointF>, override val color: Int, val width: Float, val opacity: Float) : Markup {
         override fun withColor(c: Int) = copy(color = c)
     }
@@ -32,15 +32,11 @@ sealed interface Markup {
         override fun withColor(c: Int) = copy(color = c)
     }
 
-    /** Text-snapped highlight: one rect per selected line fragment. */
-    data class Highlight(val rects: List<RectF>, override val color: Int) : Markup {
-        override fun withColor(c: Int) = copy(color = c)
-    }
 }
 
 enum class ShapeKind { Line, Arrow, Rect, Circle }
 
-enum class Tool { None, Select, Pen, Highlight, Line, Curve, Arrow, Rect, Circle, Text, Erase }
+enum class Tool { None, Select, Pen, Highlighter, Line, Curve, Arrow, Rect, Circle, Text, Erase }
 
 /** A markup placed on a page. [id] is also written to the PDF annotation's /NM ("pt-<id>"). */
 data class Item(val id: Long, val page: Int, val m: Markup)

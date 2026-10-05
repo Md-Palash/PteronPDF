@@ -6,12 +6,14 @@ import android.graphics.PointF
 import android.graphics.RectF
 import android.net.Uri
 import android.os.ParcelFileDescriptor
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import com.artifex.mupdf.fitz.Matrix
 import com.artifex.mupdf.fitz.PDFAnnotation
 import com.artifex.mupdf.fitz.PDFDocument
 import com.artifex.mupdf.fitz.PDFPage
 import com.artifex.mupdf.fitz.Point
-import com.artifex.mupdf.fitz.Quad
 import com.artifex.mupdf.fitz.Rect
 import com.artifex.mupdf.fitz.SeekableInputStream
 import com.artifex.mupdf.fitz.android.AndroidDrawDevice
@@ -52,10 +54,19 @@ class PdfEngine private constructor(
     private val context: Context,
     private val pfd: ParcelFileDescriptor,
     private val doc: PDFDocument,
-    val pages: List<PageInfo>,
+    initialPages: List<PageInfo>,
 ) {
     private val io: CoroutineDispatcher = ENGINE_DISPATCHER
+
+    /** Observable so the page list and counters update when a page is deleted. */
+    var pages: List<PageInfo> by mutableStateOf(initialPages); private set
     val pageCount get() = pages.size
+
+    /** Removes page [index] from the open document (the file on disk only changes when you save). */
+    suspend fun deletePage(index: Int) {
+        withContext(io) { doc.deletePage(index) }
+        pages = pages.filterIndexed { i, _ -> i != index }
+    }
 
     // ───────────── rendering ─────────────
     /** Renders [index] so its width is [widthPx]. Annotations already in the file are included. Caller keeps a white backdrop. */
@@ -99,24 +110,6 @@ class PdfEngine private constructor(
             if (i % 20 == 0) onProgress(i)
         }
         out
-    }
-
-    // ───────────── text selection (for the Highlight tool) ─────────────
-    /** One rect per selected line fragment between [a] and [b] (page coordinates). Empty if there is no text there. */
-    suspend fun selectText(pageIndex: Int, a: PointF, b: PointF): List<RectF> = withContext(io) {
-        val page = doc.loadPage(pageIndex)
-        try {
-            val st = page.toStructuredText()
-            try {
-                val quads = st.highlight(Point(a.x, a.y), Point(b.x, b.y)) ?: return@withContext emptyList()
-                quads.map { q ->
-                    RectF(
-                        minOf(q.ul_x, q.ll_x), minOf(q.ul_y, q.ur_y),
-                        maxOf(q.ur_x, q.lr_x), maxOf(q.ll_y, q.lr_y),
-                    )
-                }.filter { it.width() > 0.5f && it.height() > 0.5f }
-            } finally { st.destroy() }
-        } finally { page.destroy() }
     }
 
     // ───────────── erasing annotations already stored in the file ─────────────
@@ -183,10 +176,6 @@ class PdfEngine private constructor(
                     setRect(Rect(r.left, r.top, r.right, r.bottom))
                     setColor(rgb(m.color)); setBorderWidth(m.width)
                 }
-            }
-            is Markup.Highlight -> page.createAnnotation(PDFAnnotation.TYPE_HIGHLIGHT).apply {
-                setQuadPoints(m.rects.map { Quad(it.left, it.top, it.right, it.top, it.left, it.bottom, it.right, it.bottom) }.toTypedArray())
-                setColor(rgb(m.color))
             }
             is Markup.Text -> page.createAnnotation(PDFAnnotation.TYPE_FREE_TEXT).apply {
                 setRect(Rect(m.rect.left, m.rect.top, m.rect.right, m.rect.bottom))
