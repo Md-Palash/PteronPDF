@@ -8,6 +8,11 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -29,6 +34,9 @@ import app.pteronpdf.ui.HomeScreen
 import app.pteronpdf.ui.ReaderScreen
 import app.pteronpdf.ui.SettingsScreen
 
+/** Night-light style tint: multiplies the screen by a warm colour, which cuts blue most, green a little, red not at all. */
+private val WarmTint = Color(0xFFFFD69E)
+
 class MainActivity : ComponentActivity() {
     private var openUri by mutableStateOf<Uri?>(null)
 
@@ -45,7 +53,13 @@ class MainActivity : ComponentActivity() {
             PteronTheme(ThemePresets[settings.themeIndex], settings.darkMode, font) {
                 var showSettings by remember { mutableStateOf(false) }
                 val u = openUri
-                Box(Modifier.fillMaxSize()) {
+                // Eye protection: rendered into an off-screen layer, then tinted with Multiply so black stays black.
+                val warm = if (settings.eyeProtection) {
+                    Modifier
+                        .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+                        .drawWithContent { drawContent(); drawRect(WarmTint, blendMode = BlendMode.Multiply) }
+                } else Modifier
+                Box(Modifier.fillMaxSize().then(warm)) {
                     if (u == null) {
                         HomeScreen(prefs = prefs, settings = settings, onOpen = { openUri = it }, onSettings = { showSettings = true })
                     } else {
