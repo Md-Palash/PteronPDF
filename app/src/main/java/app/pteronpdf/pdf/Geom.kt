@@ -17,7 +17,8 @@ object Geom {
     private const val CURVE_STEPS = 28
     private const val CIRCLE_STEPS = 72
 
-    fun arrowBarb(width: Float) = (width * 5f).coerceIn(9f, 30f)
+    /** Length of each arrow-head barb in points: a bold head that still scales with the stroke width. */
+    fun arrowBarb(width: Float) = (width * 8f).coerceIn(16f, 54f)
 
     /** Polylines that make up the stroked shape. The overlay paints exactly this, and the PDF stores exactly this. */
     fun strokes(m: Markup): List<List<PointF>> = when (m) {

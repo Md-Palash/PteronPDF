@@ -69,14 +69,17 @@ class PdfEngine private constructor(
     }
 
     // ───────────── rendering ─────────────
-    /** Renders [index] so its width is [widthPx]. Annotations already in the file are included. Caller keeps a white backdrop. */
-    suspend fun render(index: Int, widthPx: Int): Bitmap = withContext(io) {
+    /** Renders [index] so its width is [widthPx]. Annotations already in the file are included. Caller keeps a white backdrop.
+     *  [onReady] receives the finished bitmap on the engine thread (used to cache it even when the requester gave up). */
+    suspend fun render(index: Int, widthPx: Int, onReady: ((Bitmap) -> Unit)? = null): Bitmap = withContext(io) {
         val page = doc.loadPage(index)
-        try {
+        val bmp = try {
             val b = page.bounds
             val s = widthPx / (b.x1 - b.x0)
             AndroidDrawDevice.drawPage(page, Matrix(s))
         } finally { page.destroy() }
+        onReady?.invoke(bmp)     // runs on the engine thread even if the caller was cancelled meanwhile
+        bmp
     }
 
     // ───────────── search (NFC + NFD, as on desktop) ─────────────

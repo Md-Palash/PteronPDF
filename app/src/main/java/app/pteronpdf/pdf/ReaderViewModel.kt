@@ -1,12 +1,15 @@
 package app.pteronpdf.pdf
 
 import android.app.Application
+import android.content.ComponentCallbacks2
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.PointF
 import android.graphics.RectF
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.util.LruCache
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -24,6 +27,16 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+/**
+ * A mark that is being carried across the screen. It is painted in one screen-wide layer at [tl] (root coordinates, top-left of
+ * its bounds) and [scale] px per PDF point, so it can sit between pages and follow the finger freely. When released it glides
+ * to [settleTo] (at [settleScale]) while the real item, already moved to its new page, stays hidden.
+ */
+data class Ghost(
+    val id: Long, val m: Markup, val tl: Offset, val scale: Float,
+    val settleTo: Offset? = null, val settleScale: Float = scale,
+)
 
 class ReaderViewModel(app: Application, val uri: Uri) : AndroidViewModel(app) {
     private val prefs = Prefs(app)
@@ -61,6 +74,9 @@ class ReaderViewModel(app: Application, val uri: Uri) : AndroidViewModel(app) {
     var selectedId by mutableStateOf<Long?>(null); private set
     /** Item currently being dragged: the overlay paints this instead of the stored version. */
     var preview by mutableStateOf<Item?>(null); private set
+    /** Mark being carried (see [Ghost]). Only the dragged item's id is observed by the pages, so a move doesn't redraw them. */
+    var ghost by mutableStateOf<Ghost?>(null)
+    val ghostId: Long? by derivedStateOf { ghost?.id }
 
     val selected: Item? get() = selectedId?.let { id -> items.firstOrNull { it.id == id } }
 
@@ -79,6 +95,10 @@ class ReaderViewModel(app: Application, val uri: Uri) : AndroidViewModel(app) {
     var autoScrollBottom = 0f   // …or below this
     var edgeScroll: (Float) -> Unit = {}
     fun pageAt(p: Offset): Int? = pageRoots.entries.firstOrNull { it.value.contains(p) }?.key
+    /** The page under [p], or the closest one vertically when [p] is in the gap between pages. */
+    fun pageNear(p: Offset): Int? = pageAt(p) ?: pageRoots.entries.minByOrNull { (_, r) ->
+        if (p.y < r.top) r.top - p.y else if (p.y > r.bottom) p.y - r.bottom else 0f
+    }?.key
 
     // ── search state ──
     var query by mutableStateOf("")
@@ -102,12 +122,23 @@ class ReaderViewModel(app: Application, val uri: Uri) : AndroidViewModel(app) {
 
     suspend fun render(i: Int, w: Int): Bitmap? {
         val e = engine ?: return null
-        val v = pageVersion(i)
-        cache.get(key(i, w, v))?.let { return it }
-        val bmp = e.render(i, w)
-        cache.put(key(i, w, v), bmp)
-        return bmp
+        val k = key(i, w, pageVersion(i))
+        cache.get(k)?.let { return it }
+        // The bitmap is stored from inside the render job. A page that scrolled away just as its render finished still
+        // keeps the result (scrolling back is instant) instead of the work being thrown away.
+        return e.render(i, w) { cache.put(k, it) }
     }
+
+    // When Android asks apps to trim: drop cached page images that are not on screen (the visible ones are held by the UI).
+    private val trimCallbacks = object : ComponentCallbacks2 {
+        override fun onTrimMemory(level: Int) {
+            if (level >= ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) cache.evictAll()   // app went to the background
+            else if (level >= 10) cache.trimToSize(cache.size() / 2)                  // running low while in front
+        }
+        override fun onConfigurationChanged(newConfig: Configuration) {}
+        @Deprecated("Deprecated in Java") override fun onLowMemory() { cache.evictAll() }
+    }
+    init { app.registerComponentCallbacks(trimCallbacks) }
 
     init { viewModelScope.launch { load() } }
 
@@ -115,6 +146,7 @@ class ReaderViewModel(app: Application, val uri: Uri) : AndroidViewModel(app) {
         try {
             name = queryName(uri)
             val e = PdfEngine.open(getApplication(), uri)
+            if (released) { e.close(); return }      // closed again before it finished opening
             engine = e
             initialPage = if (prefs.rememberPosition)
                 prefs.recents().firstOrNull { it.uri == uri }?.lastPage?.coerceIn(0, e.pageCount - 1) ?: 0
@@ -274,7 +306,7 @@ class ReaderViewModel(app: Application, val uri: Uri) : AndroidViewModel(app) {
                 for (i in items.indices) if (items[i].page > index) items[i] = items[i].copy(page = items[i].page - 1)
                 // history refers to old page numbers, so it can't be replayed safely any more
                 undoStack.clear(); redoStack.clear()
-                selectedId = null; preview = null
+                selectedId = null; preview = null; ghost = null
                 clearSearch()
                 cache.evictAll(); pageVersions.value = emptyMap(); epoch++
                 currentPage = currentPage.coerceIn(0, e.pageCount - 1)
@@ -356,20 +388,29 @@ class ReaderViewModel(app: Application, val uri: Uri) : AndroidViewModel(app) {
         engine = fresh
         cache.evictAll()
         items.clear(); undoStack.clear(); redoStack.clear()
-        selectedId = null; preview = null
+        selectedId = null; preview = null; ghost = null
         pageVersions.value = emptyMap(); epoch++
         savedAt = editCount; engineEdited = false
         message = "Saved"
         old?.close()
     }
 
-    override fun onCleared() {
+    private var released = false
+
+    /** Frees the document and every cached page image. Called when the reader leaves the screen, and again (harmlessly) on clear. */
+    fun release() {
+        if (released) return
+        released = true
         touchRecent()
+        runCatching { getApplication<Application>().unregisterComponentCallbacks(trimCallbacks) }
         val e = engine; engine = null
         cache.evictAll()
-        // viewModelScope is already cancelled here; close on a non-cancellable context.
+        items.clear(); undoStack.clear(); redoStack.clear(); ghost = null; preview = null
+        // viewModelScope may already be cancelled; close on a non-cancellable context.
         kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.Default) {
             withContext(NonCancellable) { e?.close() }
         }
     }
+
+    override fun onCleared() = release()
 }
