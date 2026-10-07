@@ -81,6 +81,8 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.core:core-splashscreen:1.0.1")
+    // Installs the pre-compiled "baseline profile" that Compose ships, so the app starts faster and janks less on first runs (less CPU, less battery).
+    implementation("androidx.profileinstaller:profileinstaller:1.4.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
     // Same engine family as PyMuPDF on desktop -> identical rendering,
