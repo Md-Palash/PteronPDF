@@ -2,12 +2,17 @@ package app.pteronpdf.data
 
 import android.content.Context
 import android.net.Uri
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import app.pteronpdf.theme.AppFont
 import app.pteronpdf.theme.DarkMode
+import app.pteronpdf.theme.ThemePreset
+import app.pteronpdf.theme.ThemePresets
+import app.pteronpdf.theme.customPreset
 
 data class RecentDoc(val uri: Uri, val name: String, val lastPage: Int, val pages: Int, val time: Long)
 
@@ -18,6 +23,18 @@ class Prefs(context: Context) {
     var themeIndex: Int
         get() = sp.getInt("theme", 0)
         set(v) = sp.edit().putInt("theme", v).apply()
+
+    var customHue: Float
+        get() = sp.getFloat("customHue", 210f)
+        set(v) = sp.edit().putFloat("customHue", v).apply()
+
+    var customSat: Float
+        get() = sp.getFloat("customSat", 0.6f)
+        set(v) = sp.edit().putFloat("customSat", v).apply()
+
+    var eyeStrength: Float
+        get() = sp.getFloat("eyeStrength", 0.5f)
+        set(v) = sp.edit().putFloat("eyeStrength", v).apply()
 
     var darkMode: DarkMode
         get() = DarkMode.entries.getOrElse(sp.getInt("dark", 0)) { DarkMode.System }
@@ -69,7 +86,13 @@ class Prefs(context: Context) {
 /** Observable view of the settings: UI reads these, writes go through to [Prefs]. */
 class AppSettings(private val p: Prefs) {
     var themeIndex by mutableIntStateOf(p.themeIndex); private set
+    var customHue by mutableFloatStateOf(p.customHue); private set
+    var customSat by mutableFloatStateOf(p.customSat); private set
+    var eyeStrength by mutableFloatStateOf(p.eyeStrength); private set
     var darkMode by mutableStateOf(p.darkMode); private set
+
+    /** The preset in use: one of the built-in themes, or the user's own colour. Cached until an input changes. */
+    val preset: ThemePreset by derivedStateOf { ThemePresets.getOrNull(themeIndex) ?: customPreset(customHue, customSat) }
     var font by mutableStateOf(p.font); private set
     var readingMode by mutableStateOf(p.readingMode); private set
     var eyeProtection by mutableStateOf(p.eyeProtection); private set
@@ -78,6 +101,11 @@ class AppSettings(private val p: Prefs) {
 
     fun setTheme(v: Int) { themeIndex = v; p.themeIndex = v }
     fun setDark(v: DarkMode) { darkMode = v; p.darkMode = v }
+    /** Slider drags only move the in-memory value (no disk write per tick); [saveCustomTheme] persists it when the finger lifts. */
+    fun previewCustomTheme(hue: Float, sat: Float) { customHue = hue; customSat = sat }
+    fun saveCustomTheme() { p.customHue = customHue; p.customSat = customSat }
+    fun previewEyeStrength(v: Float) { eyeStrength = v }
+    fun saveEyeStrength() { p.eyeStrength = eyeStrength }
     fun changeFont(v: AppFont) { font = v; p.font = v }
     fun changeReadingMode(v: Boolean) { readingMode = v; p.readingMode = v }
     fun changeEyeProtection(v: Boolean) { eyeProtection = v; p.eyeProtection = v }
