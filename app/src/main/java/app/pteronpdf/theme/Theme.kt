@@ -1,5 +1,7 @@
 package app.pteronpdf.theme
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ProvideTextStyle
@@ -8,7 +10,9 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.remember
+import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.text.TextStyle
@@ -43,7 +47,22 @@ data class PteronColors(
     val isDark: Boolean,
 )
 
-val LocalPteron = staticCompositionLocalOf<PteronColors> { error("PteronTheme missing") }
+// Colours now animate between themes, so this changes over time: readers recompose, not the whole tree.
+val LocalPteron = compositionLocalOf<PteronColors> { error("PteronTheme missing") }
+
+/** themeIndex value meaning "the user's own colour" (hue + richness) instead of one of [ThemePresets]. */
+const val CUSTOM_THEME = -1
+
+/** Builds the three theme shades (card / in-between / darker selected) from one hue, like the hand-made presets. */
+fun customPreset(hue: Float, sat: Float): ThemePreset {
+    val s = sat.coerceIn(0f, 1f)
+    return ThemePreset(
+        "Custom",
+        light = Color.hsv(hue, 0.10f + 0.12f * s, 0.97f),
+        medium = Color.hsv(hue, 0.30f + 0.35f * s, 0.92f - 0.12f * s),
+        dark = Color.hsv(hue, 0.55f + 0.30f * s, 0.46f),
+    )
+}
 
 enum class DarkMode { System, Light, Dark }
 
@@ -66,9 +85,12 @@ private fun Typography.withFont(f: FontFamily?): Typography = if (f == null) thi
 )
 
 @Composable
+private fun glide(c: Color): Color = animateColorAsState(c, tween(300), label = "theme").value
+
+@Composable
 fun PteronTheme(preset: ThemePreset, mode: DarkMode, font: FontFamily?, content: @Composable () -> Unit) {
     val dark = isDarkNow(mode)
-    val colors = if (dark) {
+    val target = if (dark) {
         // Dark: near-black tinted with the theme hue, so cards still carry the theme shade.
         val base = Color(0xFF16171A)
         PteronColors(
@@ -83,6 +105,11 @@ fun PteronTheme(preset: ThemePreset, mode: DarkMode, font: FontFamily?, content:
             chip = lerp(preset.light, Color.White, 0.45f), divider = Color(0x1F000000), isDark = false,
         )
     }
+    // every theme / dark-mode change glides to the new colours instead of snapping
+    val colors = PteronColors(
+        bar = glide(target.bar), canvas = glide(target.canvas), accent = glide(target.accent), onBar = glide(target.onBar),
+        onAccent = glide(target.onAccent), chip = glide(target.chip), divider = glide(target.divider), isDark = target.isDark,
+    )
     val scheme = if (dark) darkColorScheme(
         primary = colors.accent, onPrimary = colors.onAccent, surface = colors.bar,
         onSurface = colors.onBar, background = colors.canvas, surfaceContainer = colors.bar,
@@ -92,10 +119,13 @@ fun PteronTheme(preset: ThemePreset, mode: DarkMode, font: FontFamily?, content:
         onSurface = colors.onBar, background = colors.canvas, surfaceContainer = colors.bar,
         surfaceContainerLow = colors.bar, surfaceContainerHigh = colors.bar, surfaceContainerHighest = colors.bar,
     )
+    // built once per font, not once per animation frame of a colour change
+    val typography = remember(font) { Typography().withFont(font) }
+    val textStyle = remember(font) { TextStyle(fontFamily = font) }
     CompositionLocalProvider(LocalPteron provides colors) {
-        MaterialTheme(colorScheme = scheme, typography = Typography().withFont(font)) {
+        MaterialTheme(colorScheme = scheme, typography = typography) {
             // Plain Text(...) calls (no explicit style) read LocalTextStyle, so the chosen font must be set there too.
-            ProvideTextStyle(TextStyle(fontFamily = font), content)
+            ProvideTextStyle(textStyle, content)
         }
     }
 }
