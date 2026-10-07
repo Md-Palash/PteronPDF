@@ -19,7 +19,7 @@ import androidx.compose.ui.semantics.semantics
  * material-icons-extended (~10 MB of classes) in the APK.
  */
 enum class PIcon { Back, Open, Save, Search, Up, Down, Close, Undo, Redo, Edit, Grid, Theme, Pen, Highlighter,
-    Line, Curve, Arrow, Rect, Circle, Text, Eraser, Check, More, Select, Settings, Trash, Chevron, Palette, Type, Book, Info, Moon, Sun }
+    Line, Curve, Arrow, Rect, Circle, Text, Eraser, Check, More, Select, Settings, Trash, Chevron, Palette, Type, Book, Info, Moon, Sun, Copy }
 
 @Composable
 fun PIconView(icon: PIcon, tint: Color, modifier: Modifier = Modifier.size(22.dp), desc: String? = null) {
@@ -57,10 +57,20 @@ fun PIconView(icon: PIcon, tint: Color, modifier: Modifier = Modifier.size(22.dp
             PIcon.Grid -> listOf(4f to 4f, 13.5f to 4f, 4f to 13.5f, 13.5f to 13.5f).forEach { (x, y) -> drawRoundRect(tint, p(x, y), Size(6.5f * k, 6.5f * k), CornerRadius(1.5f * k), style = st) }
             PIcon.Theme -> { drawCircle(tint, 8f * k, p(12f, 12f), style = st); drawPath(path { moveTo(12f * k, 4f * k); arcTo(androidx.compose.ui.geometry.Rect(p(4f, 4f), Size(16f * k, 16f * k)), -90f, 180f, false); close() }, tint) }
             PIcon.Pen -> { drawPath(path { moveTo(4f * k, 20f * k); quadraticTo(8f * k, 6f * k, 12f * k, 12f * k); quadraticTo(15f * k, 17f * k, 20f * k, 5f * k) }, tint, style = st) }
-            PIcon.Highlighter -> { drawRoundRect(tint.copy(alpha = 0.35f), p(4f, 8f), Size(16f * k, 8f * k), CornerRadius(2f * k)); line(p(6f, 19f), p(18f, 19f)) }
+            PIcon.Highlighter -> {
+                // a marker pen: slanted body, solid chisel tip at the lower left, and the stroke of ink it leaves
+                drawPath(path { moveTo(15f * k, 3.5f * k); lineTo(20.5f * k, 9f * k); lineTo(12f * k, 17.5f * k); lineTo(6.5f * k, 12f * k); close() }, tint, style = st)
+                drawPath(path { moveTo(6.5f * k, 12f * k); lineTo(12f * k, 17.5f * k); lineTo(5f * k, 18.5f * k); close() }, tint)
+                line(p(12.6f, 6.4f), p(17.6f, 11.4f))
+                drawLine(tint.copy(alpha = 0.45f), p(11f, 21f), p(20f, 21f), 3.4f * k, StrokeCap.Round)
+            }
             PIcon.Line -> line(p(5f, 19f), p(19f, 5f))
             PIcon.Curve -> drawPath(path { moveTo(4f * k, 18f * k); quadraticTo(6f * k, 4f * k, 20f * k, 6f * k) }, tint, style = st)
-            PIcon.Arrow -> { line(p(5f, 19f), p(19f, 5f)); line(p(10f, 5f), p(19f, 5f)); line(p(19f, 5f), p(19f, 14f)) }
+            PIcon.Arrow -> { line(p(5f, 19f), p(19f, 5f)); line(p(8f, 5f), p(19f, 5f)); line(p(19f, 5f), p(19f, 16f)) }
+            PIcon.Copy -> {
+                drawRoundRect(tint, p(9f, 9f), Size(11f * k, 11f * k), CornerRadius(2.2f * k), style = st)
+                drawPath(path { moveTo(8.5f * k, 15f * k); lineTo(5.5f * k, 15f * k); lineTo(5.5f * k, 4.5f * k); lineTo(15f * k, 4.5f * k); lineTo(15f * k, 8.5f * k) }, tint, style = st)
+            }
             PIcon.Rect -> drawRoundRect(tint, p(5f, 5f), Size(14f * k, 14f * k), CornerRadius(1.5f * k), style = st)
             PIcon.Circle -> drawCircle(tint, 8f * k, p(12f, 12f), style = st)
             PIcon.Text -> { line(p(6f, 6f), p(18f, 6f)); line(p(12f, 6f), p(12f, 19f)); line(p(9f, 19f), p(15f, 19f)) }

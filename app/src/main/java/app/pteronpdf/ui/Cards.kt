@@ -6,6 +6,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -45,10 +47,10 @@ fun cardShape(pos: CardPos, r: Dp = 26.dp): Shape = when (pos) {
 
 /** One card of the top/middle/bottom stack on the main settings page. */
 @Composable
-fun CategoryCard(icon: PIcon, title: String, subtitle: String, pos: CardPos, onClick: () -> Unit) {
+fun CategoryCard(icon: PIcon, title: String, subtitle: String, pos: CardPos, index: Int = 0, onClick: () -> Unit) {
     val c = LocalPteron.current
     Row(
-        Modifier.fillMaxWidth().clip(cardShape(pos)).background(c.bar).clickable(onClick = onClick)
+        Modifier.fillMaxWidth().staggerIn(index).pressable(cardShape(pos), c.bar, pressedScale = 0.975f, onClick = onClick)
             .padding(horizontal = 18.dp, vertical = 18.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -101,6 +103,22 @@ fun OptionRow(title: String, subtitle: String? = null, onClick: (() -> Unit)? = 
         }
         Spacer(Modifier.width(12.dp))
         trailing()
+    }
+}
+
+/** A row with a title, the current value on the right and a slider under them. [onDone] fires when the finger lifts (the place to save). */
+@Composable
+fun SliderRow(title: String, valueText: String, value: Float, onChange: (Float) -> Unit, onDone: () -> Unit) {
+    val c = LocalPteron.current
+    Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp).padding(bottom = 10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(title, Modifier.weight(1f), fontSize = 14.sp, color = c.onBar.copy(alpha = 0.8f))
+            Text(valueText, fontSize = 13.sp, color = c.onBar.copy(alpha = 0.6f))
+        }
+        Slider(
+            value, onChange, Modifier.height(36.dp), onValueChangeFinished = onDone,
+            colors = SliderDefaults.colors(thumbColor = c.accent, activeTrackColor = c.accent, inactiveTrackColor = c.chip),
+        )
     }
 }
 

@@ -1,6 +1,14 @@
 package app.pteronpdf.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -31,7 +39,7 @@ import app.pteronpdf.data.AppSettings
 import app.pteronpdf.theme.AppFont
 import app.pteronpdf.theme.Fonts
 import app.pteronpdf.theme.LocalPteron
-import app.pteronpdf.theme.ThemePresets
+import kotlin.math.roundToInt
 
 private enum class Section(val title: String) { Appearance("Appearance"), Reading("Reading"), About("About") }
 
@@ -55,21 +63,33 @@ fun SettingsScreen(settings: AppSettings, onClose: () -> Unit) {
     ) {
         FixedTopBar {
             BarIconButton(PIcon.Back, "Back", ::back)
-            Text(section?.title ?: "Settings", fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = c.onBar, modifier = Modifier.padding(start = 6.dp))
+            AnimatedContent(section?.title ?: "Settings", transitionSpec = { fadeIn(tween(200)) togetherWith fadeOut(tween(120)) }, label = "title") { t ->
+                Text(t, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = c.onBar, modifier = Modifier.padding(start = 6.dp))
+            }
         }
         Column(
             Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp, vertical = 18.dp).navigationBarsPadding()
         ) {
-            when (section) {
+            // pages slide sideways (deeper = from the right, back = from the left) while fading
+            AnimatedContent(
+                section,
+                transitionSpec = {
+                    val deeper = targetState != null
+                    (slideInHorizontally(tween(280)) { if (deeper) it / 4 else -it / 4 } + fadeIn(tween(240))) togetherWith
+                        (slideOutHorizontally(tween(280)) { if (deeper) -it / 4 else it / 4 } + fadeOut(tween(140)))
+                },
+                label = "section",
+            ) { sec ->
+            when (sec) {
                 null -> CardStack {
-                    CategoryCard(PIcon.Palette, "Appearance", "Theme and fonts", CardPos.Top) { section = Section.Appearance }
-                    CategoryCard(PIcon.Book, "Reading", "Reading mode, screen, position", CardPos.Middle) { section = Section.Reading }
-                    CategoryCard(PIcon.Info, "About", "Version and privacy policy", CardPos.Bottom) { section = Section.About }
+                    CategoryCard(PIcon.Palette, "Appearance", "Theme and fonts", CardPos.Top, index = 0) { section = Section.Appearance }
+                    CategoryCard(PIcon.Book, "Reading", "Reading mode, screen, position", CardPos.Middle, index = 1) { section = Section.Reading }
+                    CategoryCard(PIcon.Info, "About", "Version and privacy policy", CardPos.Bottom, index = 2) { section = Section.About }
                 }
 
                 Section.Appearance -> OptionsCard {
-                    val p = ThemePresets[settings.themeIndex]
+                    val p = settings.preset
                     OptionRow("Theme", "${p.name} · ${settings.darkMode.name}", onClick = { showTheme = true }) {
                         Box(Modifier.size(28.dp).clip(CircleShape).background(Brush.linearGradient(listOf(p.light, p.medium, p.dark))))
                     }
@@ -83,6 +103,13 @@ fun SettingsScreen(settings: AppSettings, onClose: () -> Unit) {
                     ToggleRow("Reading mode", "Hide the top bar until you tap the page", settings.readingMode, settings::changeReadingMode)
                     OptionDivider()
                     ToggleRow("Eye protection", "Warmer, softer colours with less blue light", settings.eyeProtection, settings::changeEyeProtection)
+                    // the strength slider unfolds under the switch; the whole screen warms live while it moves
+                    AnimatedVisibility(settings.eyeProtection) {
+                        SliderRow(
+                            "Strength", "${(settings.eyeStrength * 100).roundToInt()}%", settings.eyeStrength,
+                            onChange = settings::previewEyeStrength, onDone = settings::saveEyeStrength,
+                        )
+                    }
                     OptionDivider()
                     ToggleRow("Keep screen awake", "Don't let the screen turn off while reading", settings.keepAwake, settings::changeKeepAwake)
                     OptionDivider()
@@ -100,11 +127,12 @@ fun SettingsScreen(settings: AppSettings, onClose: () -> Unit) {
                     }
                 }
             }
+            }
         }
     }
 
     if (showTheme) ModalBottomSheet(onDismissRequest = { showTheme = false }, containerColor = c.bar) {
-        ThemeSheetContent(settings.themeIndex, settings.darkMode, settings::setTheme, settings::setDark)
+        ThemeSheetContent(settings)
     }
     if (showFont) ModalBottomSheet(onDismissRequest = { showFont = false }, containerColor = c.bar) {
         FontSheetContent(settings.font) { settings.changeFont(it); showFont = false }

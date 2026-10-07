@@ -1,13 +1,20 @@
 package app.pteronpdf.ui
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -15,9 +22,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.*
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import app.pteronpdf.theme.*
 
 /** Floating pill card — the "popped card" look from the desktop toolbar. */
@@ -34,19 +39,30 @@ fun PillCard(modifier: Modifier = Modifier, content: @Composable RowScope.() -> 
     )
 }
 
+/** Round icon button. [animateIcon] makes a changed icon (moon <-> sun) turn over instead of snapping. */
 @Composable
 fun BarIconButton(
     icon: PIcon, desc: String, onClick: () -> Unit,
-    enabled: Boolean = true, selected: Boolean = false,
+    enabled: Boolean = true, selected: Boolean = false, animateIcon: Boolean = false,
 ) {
     val c = LocalPteron.current
     val tint = when { selected -> c.onAccent; !enabled -> c.onBar.copy(alpha = 0.3f); else -> c.onBar }
+    // fade from the accent at zero alpha (not from transparent black) so the highlight never greys out on the way
+    val bg by animateColorAsState(if (selected) c.accent else c.accent.copy(alpha = 0f), tween(160), label = "button")
     Box(
-        Modifier.size(44.dp).clip(CircleShape)
-            .background(if (selected) c.accent else Color.Transparent)
-            .clickable(enabled = enabled, onClick = onClick),
+        Modifier.size(44.dp).pressable(CircleShape, bg, enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
-    ) { PIconView(icon, tint, Modifier.size(22.dp), desc) }
+    ) {
+        if (animateIcon) AnimatedContent(
+            icon,
+            transitionSpec = {
+                (fadeIn(tween(220)) + scaleIn(tween(220), initialScale = 0.5f)) togetherWith
+                    (fadeOut(tween(120)) + scaleOut(tween(120), targetScale = 0.5f))
+            },
+            label = "icon",
+        ) { PIconView(it, tint, Modifier.size(22.dp), desc) }
+        else PIconView(icon, tint, Modifier.size(22.dp), desc)
+    }
 }
 
 /** The PteronPDF logo (document leaf unfolding into a wing), drawn natively — no image file in the APK. */
@@ -80,41 +96,5 @@ fun LogoMark(@Suppress("UNUSED_PARAMETER") accent: Color, size: androidx.compose
             close()
         }, Color(0xFF00B88A))
         drawPath(poly(62f to 70f, 76f to 86f, 70f to 88f, 56f to 76f), Color(0xFF0052CC).copy(alpha = 0.3f))
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun ThemeSheetContent(themeIndex: Int, darkMode: DarkMode, onTheme: (Int) -> Unit, onDark: (DarkMode) -> Unit) {
-    val c = LocalPteron.current
-    Column(Modifier.padding(horizontal = 20.dp).padding(bottom = 28.dp).navigationBarsPadding()) {
-        Text("Theme", fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = c.onBar)
-        Spacer(Modifier.height(14.dp))
-        ThemePresets.chunked(6).forEach { row ->
-            Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                row.forEach { p ->
-                    val i = ThemePresets.indexOf(p)
-                    Box(
-                        Modifier.size(44.dp).clip(CircleShape)
-                            .background(Brush.linearGradient(listOf(p.light, p.medium)))
-                            .clickable { onTheme(i) },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        if (i == themeIndex) Box(Modifier.size(18.dp).clip(CircleShape).background(p.dark))
-                    }
-                }
-            }
-        }
-        Spacer(Modifier.height(16.dp))
-        Text(ThemePresets[themeIndex].name, fontSize = 13.sp, color = c.onBar.copy(alpha = 0.6f))
-        Spacer(Modifier.height(18.dp))
-        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-            DarkMode.entries.forEachIndexed { i, m ->
-                SegmentedButton(
-                    selected = m == darkMode, onClick = { onDark(m) },
-                    shape = SegmentedButtonDefaults.itemShape(i, DarkMode.entries.size),
-                ) { Text(m.name) }
-            }
-        }
     }
 }

@@ -174,7 +174,10 @@ private fun PageItem(
             .onGloballyPositioned { vm.pageRoots[index] = Rect(it.positionInRoot(), it.size.toSize()) }
             .shadow(5.dp, RoundedCornerShape0).background(Color.White)
     ) {
-        bmp?.let { Image(it.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.FillBounds) }
+        bmp?.let { b ->
+            val img = remember(b) { b.asImageBitmap() }       // wrapped once per bitmap, not on every recomposition
+            Image(img, null, Modifier.fillMaxSize(), contentScale = ContentScale.FillBounds)
+        }
         SearchHighlights(vm, index, info.width)
         MarkupOverlay(vm, index, info.width, onText, onEditText)
     }

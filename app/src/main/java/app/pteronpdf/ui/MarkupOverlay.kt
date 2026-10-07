@@ -4,11 +4,16 @@ import android.graphics.Paint
 import android.graphics.PointF
 import android.graphics.RectF
 import android.graphics.Typeface
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -17,6 +22,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.lerp as lerpOffset
+import androidx.compose.ui.util.lerp
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
@@ -25,14 +32,17 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.AwaitPointerEventScope
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
 import app.pteronpdf.pdf.Geom
+import app.pteronpdf.pdf.Ghost
 import app.pteronpdf.pdf.Item
 import app.pteronpdf.pdf.Markup
 import app.pteronpdf.pdf.ReaderViewModel
@@ -91,9 +101,10 @@ fun MarkupOverlay(
                     } else {
                         val wasSelected = vm.selectedId == hit.id
                         vm.select(hit.id); down.consume()
-                        var cur = hit; var moved = false; var finished = false
-                        // The mark is tracked in ROOT (screen) coordinates, so it stays under the finger while the list
-                        // scrolls and lands on whichever page its centre is over when you let go.
+                        var moved = false; var finished = false
+                        // The mark is carried in ROOT (screen) coordinates by a screen-wide "ghost" layer, so it follows the finger
+                        // freely, passes smoothly between pages and keeps up while the list scrolls. Only when you let go is the
+                        // page under it decided, and the mark glides into place there.
                         val lc = coords
                         val srcRoot = vm.pageRoots[pageIndex]
                         val b0 = Geom.bounds(hit.m)
@@ -101,22 +112,34 @@ fun MarkupOverlay(
                         val tl0 = if (srcRoot != null) Offset(srcRoot.left + b0.left * s, srcRoot.top + b0.top * s) else Offset.Zero
                         var ptr = downRoot
                         var lastLocal = down.position
-                        var target = pageIndex
-                        fun place() {
+                        fun tlNow() = Offset(tl0.x + (ptr.x - downRoot.x), tl0.y + (ptr.y - downRoot.y))
+
+                        /** Where the mark ends up if released now: the page its centre is over (or the nearest), kept inside that page. */
+                        fun landing(): Landing {
                             val e = vm.engine
                             if (e == null || srcRoot == null) {            // layout unknown: stay on this page
                                 val a = toPdf(down.position); val b = toPdf(lastLocal)
-                                cur = hit.copy(m = Geom.move(hit.m, b.x - a.x, b.y - a.y)); vm.liveEdit(cur); return
+                                return Landing(hit.copy(m = Geom.move(hit.m, b.x - a.x, b.y - a.y)), null, s)
                             }
-                            val tl = Offset(tl0.x + (ptr.x - downRoot.x), tl0.y + (ptr.y - downRoot.y))
+                            val tl = tlNow()
                             val centre = Offset(tl.x + b0.width() * s / 2, tl.y + b0.height() * s / 2)
-                            vm.pageAt(centre)?.let { if (it < e.pageCount) target = it }
+                            val target = (vm.pageNear(centre) ?: pageIndex).coerceIn(0, e.pageCount - 1)
                             val r = vm.pageRoots[target] ?: srcRoot
                             val info = e.pages[target]
                             val st = r.width / info.width
-                            val moved0 = Geom.move(hit.m, (tl.x - r.left) / st - b0.left, (tl.y - r.top) / st - b0.top)
-                            cur = hit.copy(page = target, m = Geom.clampInto(moved0, info.width, info.height))
-                            vm.liveEdit(cur)
+                            val shifted = Geom.move(hit.m, (tl.x - r.left) / st - b0.left, (tl.y - r.top) / st - b0.top)
+                            val fin = Geom.clampInto(shifted, info.width, info.height)
+                            val fb = Geom.bounds(fin)
+                            return Landing(hit.copy(page = target, m = fin), Offset(r.left + fb.left * st, r.top + fb.top * st), st)
+                        }
+                        fun land() {
+                            if (!moved) { vm.ghost = null; return }
+                            val l = landing()
+                            if (l.item.m != hit.m || l.item.page != hit.page) {
+                                vm.commitEdit(hit, l.item)
+                                // the item is already stored on its new page (hidden while the ghost glides to it)
+                                vm.ghost = l.tl?.let { Ghost(hit.id, hit.m, tlNow(), s, settleTo = it, settleScale = l.scale) }
+                            } else vm.ghost = null
                         }
                         fun autoScroll() {
                             val zone = 48f * dens; val speed = 14f * dens
@@ -124,22 +147,19 @@ fun MarkupOverlay(
                             else if (ptr.y > vm.autoScrollBottom) vm.edgeScroll(speed * ((ptr.y - vm.autoScrollBottom) / zone).coerceIn(0.2f, 1f))
                         }
                         try {
-                            val cancelled = trackDrag(true, onTick = { if (moved) { autoScroll(); place() } }) { pos, _ ->
+                            val cancelled = trackDrag(true, onTick = { if (moved) autoScroll() }) { pos, _ ->
                                 lastLocal = pos
                                 ptr = lc?.localToRoot(pos) ?: pos
-                                if (movedFar(pos, 8f)) moved = true
-                                if (moved) place()
+                                if (!moved && movedFar(pos, 8f)) moved = true
+                                if (moved) vm.ghost = Ghost(hit.id, hit.m, tlNow(), s)
                             }
                             finished = true
-                            if (!cancelled && moved && (cur.m != hit.m || cur.page != hit.page)) vm.commitEdit(hit, cur)
-                            else {
-                                vm.liveEdit(null)
-                                // tapping an already-selected text box edits its text
-                                if (!cancelled && !moved && wasSelected && hit.m is Markup.Text) onEditText(hit)
-                            }
+                            if (cancelled) vm.ghost = null else land()
+                            // tapping an already-selected text box edits its text
+                            if (!cancelled && !moved && wasSelected && hit.m is Markup.Text) onEditText(hit)
                         } finally {
                             // The gesture can be torn down mid-drag (its page scrolled out of the list): keep the move, never leave a ghost.
-                            if (!finished) { if (moved && (cur.m != hit.m || cur.page != hit.page)) vm.commitEdit(hit, cur) else vm.liveEdit(null) }
+                            if (!finished) land()
                         }
                     }
                 }
@@ -198,18 +218,52 @@ fun MarkupOverlay(
         val s = size.width / pageWidthPdf
         val preview = vm.preview
         val selId = vm.selectedId
+        val ghostId = vm.ghostId
         vm.items.forEach { stored ->
             if (stored.page != pageIndex) return@forEach
-            if (preview != null && preview.id == stored.id) return@forEach      // being dragged: painted below, wherever it is
+            if (preview != null && preview.id == stored.id) return@forEach      // being resized: painted below
+            if (ghostId != null && ghostId == stored.id) return@forEach         // being carried: painted by the ghost layer
             drawMarkup(stored.m, s)
             if (stored.id == selId) drawSelection(stored.m, s, c.accent, dens, withHandles = true)
         }
-        // the mark being moved or resized is painted on the page it is currently over (can differ from its stored page)
+        // the mark being resized is painted here in place of its stored version
         if (preview != null && preview.page == pageIndex) {
             drawMarkup(preview.m, s)
             if (preview.id == selId) drawSelection(preview.m, s, c.accent, dens, withHandles = true)
         }
         live?.let { drawMarkup(it, s) }
+    }
+}
+
+/** Where a carried mark would land: the item (page + position in that page's points) and its on-screen top-left / scale there. */
+private class Landing(val item: Item, val tl: Offset?, val scale: Float)
+
+/**
+ * Screen-wide layer that paints the mark being carried (see [Ghost]). It draws above the pages, so a mark crossing the gap between two
+ * pages is never cut off, and on release it glides into its final spot (position and size) before the real item takes over.
+ */
+@Composable
+fun DragGhost(vm: ReaderViewModel) {
+    val c = LocalPteron.current
+    val dens = LocalDensity.current.density
+    var origin by remember { mutableStateOf(Offset.Zero) }
+    // only changes when a release starts, not on every move of the finger
+    val settle by remember { derivedStateOf { vm.ghost?.settleTo } }
+    LaunchedEffect(settle) {
+        val to = settle ?: return@LaunchedEffect
+        val start = vm.ghost ?: return@LaunchedEffect
+        Animatable(0f).animateTo(1f, tween(170, easing = FastOutSlowInEasing)) {
+            vm.ghost = start.copy(tl = lerpOffset(start.tl, to, value), scale = lerp(start.scale, start.settleScale, value))
+        }
+        vm.ghost = null
+    }
+    Canvas(Modifier.fillMaxSize().onGloballyPositioned { origin = it.positionInRoot() }) {
+        val g = vm.ghost ?: return@Canvas
+        val b = Geom.bounds(g.m)
+        translate(g.tl.x - origin.x - b.left * g.scale, g.tl.y - origin.y - b.top * g.scale) {
+            drawMarkup(g.m, g.scale)
+            drawSelection(g.m, g.scale, c.accent, dens, withHandles = g.settleTo == null)
+        }
     }
 }
 
@@ -257,7 +311,7 @@ private suspend fun AwaitPointerEventScope.trackDrag(
 
 // ───────────────────────── painting ─────────────────────────
 
-private fun DrawScope.drawMarkup(m: Markup, s: Float) {
+internal fun DrawScope.drawMarkup(m: Markup, s: Float) {
     when (m) {
         is Markup.Text -> drawText(m, s)
         is Markup.Ink -> {
@@ -318,7 +372,7 @@ private fun DrawScope.drawText(m: Markup.Text, s: Float) {
     }
 }
 
-private fun DrawScope.drawSelection(m: Markup, s: Float, accent: Color, dens: Float, withHandles: Boolean) {
+internal fun DrawScope.drawSelection(m: Markup, s: Float, accent: Color, dens: Float, withHandles: Boolean) {
     val b: RectF = Geom.bounds(m)
     val pad = 4f * dens
     val dash = PathEffect.dashPathEffect(floatArrayOf(10f * dens, 7f * dens))

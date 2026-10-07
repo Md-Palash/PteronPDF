@@ -8,7 +8,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -20,6 +20,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
 import app.pteronpdf.data.AppSettings
 import app.pteronpdf.data.Prefs
 import app.pteronpdf.data.RecentDoc
@@ -32,6 +33,9 @@ fun HomeScreen(prefs: Prefs, settings: AppSettings, onOpen: (Uri) -> Unit, onSet
     val c = LocalPteron.current
     val ctx = LocalContext.current
     val recents by remember { mutableStateOf(prefs.recents()) }
+    // rows present at launch rise in one after another; rows that scroll in later simply appear
+    var settled by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { delay(700); settled = true }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -54,17 +58,18 @@ fun HomeScreen(prefs: Prefs, settings: AppSettings, onOpen: (Uri) -> Unit, onSet
                         if (c.isDark) PIcon.Sun else PIcon.Moon,
                         if (c.isDark) "Switch to light mode" else "Switch to dark mode",
                         { settings.setDark(if (c.isDark) DarkMode.Light else DarkMode.Dark) },
+                        animateIcon = true,
                     )
                     BarIconButton(PIcon.Settings, "Settings", onSettings)
                 }
             }
             if (recents.isEmpty()) {
                 Spacer(Modifier.weight(1f))
-                LogoMark(c.accent, 96.dp)
+                Box(Modifier.staggerIn(0)) { LogoMark(c.accent, 96.dp) }
                 Spacer(Modifier.height(28.dp))
-                Text("PteronPDF", fontSize = 30.sp, fontWeight = FontWeight.Bold, color = c.onBar)
+                Text("PteronPDF", Modifier.staggerIn(1), fontSize = 30.sp, fontWeight = FontWeight.Bold, color = c.onBar)
                 Spacer(Modifier.height(10.dp))
-                Text("Every page, beautifully handled.", fontSize = 15.sp, color = c.onBar.copy(alpha = 0.6f))
+                Text("Every page, beautifully handled.", Modifier.staggerIn(2), fontSize = 15.sp, color = c.onBar.copy(alpha = 0.6f))
                 Spacer(Modifier.weight(1f))
             } else {
                 Row(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -74,7 +79,9 @@ fun HomeScreen(prefs: Prefs, settings: AppSettings, onOpen: (Uri) -> Unit, onSet
                 }
                 Text("Recent", Modifier.fillMaxWidth().padding(bottom = 8.dp), fontSize = 13.sp, color = c.onBar.copy(alpha = 0.6f))
                 LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    items(recents, key = { it.uri.toString() }) { r -> RecentRow(r, onClick = { onOpen(r.uri) }) }
+                    itemsIndexed(recents, key = { _, r -> r.uri.toString() }) { i, r ->
+                        RecentRow(r, Modifier.animateItem().staggerIn(i, enabled = !settled && i < 8), onClick = { onOpen(r.uri) })
+                    }
                 }
             }
             Button(
@@ -92,10 +99,10 @@ fun HomeScreen(prefs: Prefs, settings: AppSettings, onOpen: (Uri) -> Unit, onSet
 }
 
 @Composable
-private fun RecentRow(r: RecentDoc, onClick: () -> Unit) {
+private fun RecentRow(r: RecentDoc, modifier: Modifier, onClick: () -> Unit) {
     val c = LocalPteron.current
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(c.bar).clickable(onClick = onClick).padding(16.dp),
+        modifier.fillMaxWidth().pressable(RoundedCornerShape(18.dp), c.bar, pressedScale = 0.97f, onClick = onClick).padding(16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {

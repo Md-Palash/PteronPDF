@@ -5,6 +5,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.*
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
@@ -151,6 +152,8 @@ fun ReaderScreen(vm: ReaderViewModel, settings: AppSettings, onClose: () -> Unit
                     topPad = topPad, bottomPad = bottomPad,
                 )
                 Scrubber(listState, engine.pageCount, Modifier.align(Alignment.CenterEnd))
+                // a mark being carried between pages is painted here, above the pages and under the bars
+                DragGhost(vm)
             }
         }
 
@@ -161,38 +164,46 @@ fun ReaderScreen(vm: ReaderViewModel, settings: AppSettings, onClose: () -> Unit
             modifier = Modifier.align(Alignment.TopCenter),
         ) {
             FixedTopBar {
-                if (searchOpen) SearchRow(vm, onClose = { searchOpen = false; vm.clearSearch() })
-                else {
-                    BarIconButton(PIcon.Back, "Back", ::requestClose)
-                    // the name takes whatever room is left and is cut off with … when it doesn't fit
-                    Text(
-                        vm.name, Modifier.weight(1f).padding(horizontal = 4.dp),
-                        fontSize = 15.sp, fontWeight = FontWeight.Medium, color = c.onBar,
-                        maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    )
-                    if (vm.dirty) Box(Modifier.padding(horizontal = 4.dp).size(7.dp).clip(CircleShape).background(c.accent))
-                    if (engine != null) Text(
-                        "${vm.currentPage + 1}/${engine.pageCount}",
-                        fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = c.onBar,
-                        modifier = Modifier.padding(horizontal = 4.dp),
-                    )
-                    BarIconButton(
-                        PIcon.Trash, "Delete this page", { deleteIndex = vm.currentPage },
-                        enabled = engine != null && engine.pageCount > 1,
-                    )
-                    BarIconButton(PIcon.Search, "Search", { searchOpen = true })
-                    Box {
-                        BarIconButton(PIcon.More, "More", { showMenu = true })
-                        DropdownMenu(
-                            expanded = showMenu, onDismissRequest = { showMenu = false },
-                            modifier = Modifier.width(230.dp),
-                            shape = RoundedCornerShape(20.dp), containerColor = c.bar,
-                        ) {
-                            DropdownMenuItem(text = { Text("Pages") }, onClick = { showMenu = false; showThumbs = true })
-                            DropdownMenuItem(text = { Text("Save") }, enabled = vm.dirty, onClick = { showMenu = false; vm.save() })
-                            DropdownMenuItem(text = { Text("Save a copy…") }, onClick = { showMenu = false; saveAs.launch(vm.name.removeSuffix(".pdf") + " (copy).pdf") })
-                            DropdownMenuItem(text = { Text("Theme") }, onClick = { showMenu = false; showTheme = true })
-                            DropdownMenuItem(text = { Text("Settings") }, onClick = { showMenu = false; onSettings() })
+                // search and the normal bar trade places with a quick cross-fade
+                AnimatedContent(
+                    searchOpen, Modifier.weight(1f),
+                    transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(110)) }, label = "bar",
+                ) { isSearch ->
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        if (isSearch) SearchRow(vm, onClose = { searchOpen = false; vm.clearSearch() })
+                        else {
+                            BarIconButton(PIcon.Back, "Back", ::requestClose)
+                            // the name takes whatever room is left and is cut off with … when it doesn't fit
+                            Text(
+                                vm.name, Modifier.weight(1f).padding(horizontal = 4.dp),
+                                fontSize = 15.sp, fontWeight = FontWeight.Medium, color = c.onBar,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            )
+                            if (vm.dirty) Box(Modifier.padding(horizontal = 4.dp).size(7.dp).clip(CircleShape).background(c.accent))
+                            if (engine != null) Text(
+                                "${vm.currentPage + 1}/${engine.pageCount}",
+                                fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = c.onBar,
+                                modifier = Modifier.padding(horizontal = 4.dp),
+                            )
+                            BarIconButton(
+                                PIcon.Trash, "Delete this page", { deleteIndex = vm.currentPage },
+                                enabled = engine != null && engine.pageCount > 1,
+                            )
+                            BarIconButton(PIcon.Search, "Search", { searchOpen = true })
+                            Box {
+                                BarIconButton(PIcon.More, "More", { showMenu = true })
+                                DropdownMenu(
+                                    expanded = showMenu, onDismissRequest = { showMenu = false },
+                                    modifier = Modifier.width(230.dp),
+                                    shape = RoundedCornerShape(20.dp), containerColor = c.bar,
+                                ) {
+                                    MenuItem(PIcon.Grid, "Pages") { showMenu = false; showThumbs = true }
+                                    MenuItem(PIcon.Save, "Save", enabled = vm.dirty) { showMenu = false; vm.save() }
+                                    MenuItem(PIcon.Copy, "Save a copy…") { showMenu = false; saveAs.launch(vm.name.removeSuffix(".pdf") + " (copy).pdf") }
+                                    MenuItem(PIcon.Palette, "Theme") { showMenu = false; showTheme = true }
+                                    MenuItem(PIcon.Settings, "Settings") { showMenu = false; onSettings() }
+                                }
+                            }
                         }
                     }
                 }
@@ -207,8 +218,7 @@ fun ReaderScreen(vm: ReaderViewModel, settings: AppSettings, onClose: () -> Unit
         ) {
             Box(
                 Modifier.navigationBarsPadding().padding(end = 16.dp, bottom = 16.dp).size(52.dp)
-                    .shadow(8.dp, RoundedCornerShape(16.dp)).clip(RoundedCornerShape(16.dp)).background(c.accent)
-                    .clickable { vm.chooseTool(Tool.Pen) },
+                    .shadow(8.dp, RoundedCornerShape(16.dp)).pressable(RoundedCornerShape(16.dp), c.accent) { vm.chooseTool(Tool.Pen) },
                 contentAlignment = Alignment.Center,
             ) { PIconView(PIcon.Edit, c.onAccent, Modifier.size(24.dp), "Edit") }
         }
@@ -230,7 +240,7 @@ fun ReaderScreen(vm: ReaderViewModel, settings: AppSettings, onClose: () -> Unit
         ThumbnailGrid(vm, engine, onPick = { i -> showThumbs = false; scope.launch { listState.scrollToItem(i) } })
     }
     if (showTheme) ModalBottomSheet(onDismissRequest = { showTheme = false }, containerColor = c.bar) {
-        ThemeSheetContent(settings.themeIndex, settings.darkMode, settings::setTheme, settings::setDark)
+        ThemeSheetContent(settings)
     }
     if (showColor) ModalBottomSheet(onDismissRequest = { showColor = false }, containerColor = c.bar) {
         HueSheetContent(vm)
@@ -269,6 +279,16 @@ fun ReaderScreen(vm: ReaderViewModel, settings: AppSettings, onClose: () -> Unit
                 TextButton({ showUnsaved = false; onClose() }) { Text("Discard") }
             }
         },
+    )
+}
+
+/** A menu entry with its icon in front of the label. */
+@Composable
+private fun MenuItem(icon: PIcon, label: String, enabled: Boolean = true, onClick: () -> Unit) {
+    val c = LocalPteron.current
+    DropdownMenuItem(
+        text = { Text(label) }, onClick = onClick, enabled = enabled,
+        leadingIcon = { PIconView(icon, if (enabled) c.onBar else c.onBar.copy(alpha = 0.38f), Modifier.size(20.dp)) },
     )
 }
 
@@ -334,6 +354,7 @@ private fun EditPanel(vm: ReaderViewModel, onCustomColor: () -> Unit, onEditText
 
     Column(
         Modifier.fillMaxWidth().shadow(14.dp, shape).clip(shape).background(c.bar)
+            .animateContentSize(tween(220))        // rows that come and go (colours, thickness, text options) grow the card smoothly
             .navigationBarsPadding().padding(top = 8.dp, bottom = 8.dp)
     ) {
         Box(Modifier.align(Alignment.CenterHorizontally).size(width = 36.dp, height = 4.dp).clip(RoundedCornerShape(2.dp)).background(c.onBar.copy(alpha = 0.22f)))
@@ -343,20 +364,23 @@ private fun EditPanel(vm: ReaderViewModel, onCustomColor: () -> Unit, onEditText
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 10.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             ToolDefs.forEach { d ->
                 val on = tool == d.tool
+                // the highlight fades between tools instead of jumping (it fades from the accent at zero alpha, never through grey)
+                val bg by animateColorAsState(if (on) c.accent else c.accent.copy(alpha = 0f), tween(180), label = "tool")
+                val fg by animateColorAsState(if (on) c.onAccent else c.onBar, tween(180), label = "toolText")
                 Column(
-                    Modifier.width(60.dp).clip(RoundedCornerShape(14.dp)).background(if (on) c.accent else Color.Transparent)
-                        .clickable { vm.chooseTool(d.tool) }.padding(vertical = 8.dp),
+                    Modifier.width(60.dp).pressable(RoundedCornerShape(14.dp), bg) { vm.chooseTool(d.tool) }.padding(vertical = 8.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    PIconView(d.icon, if (on) c.onAccent else c.onBar, Modifier.size(22.dp), d.label)
+                    PIconView(d.icon, fg, Modifier.size(22.dp), d.label)
                     Spacer(Modifier.height(3.dp))
-                    Text(d.label, fontSize = 10.sp, color = if (on) c.onAccent else c.onBar, maxLines = 1)
+                    Text(d.label, fontSize = 10.sp, color = fg, maxLines = 1)
                 }
             }
         }
 
         // colours
-        if (tool != Tool.Erase && tool != Tool.Select || sel != null) {
+        AnimatedVisibility(tool != Tool.Erase && tool != Tool.Select || sel != null) {
+          Column {
             Spacer(Modifier.height(6.dp))
             Row(
                 Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp),
@@ -376,23 +400,40 @@ private fun EditPanel(vm: ReaderViewModel, onCustomColor: () -> Unit, onEditText
                         .border(1.dp, c.onBar.copy(alpha = 0.2f), CircleShape).clickable(onClick = onCustomColor)
                 )
             }
+          }
         }
 
         // thickness / text options / hints
-        when {
-            showWidth -> LabeledSlider("Thickness", widthNow!!, if (isHighlighter) 4f..40f else 0.5f..12f) { vm.setWidth(it) }
-            showText -> {
-                val size = selText?.fontSize ?: vm.textSize
-                val bold = selText?.bold ?: vm.textBold
-                LabeledSlider("Text size", size, 8f..48f) { vm.setTextStyle(size = it) }
-                Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ToggleChip("Bold", bold) { vm.setTextStyle(bold = !bold, coalesce = false) }
-                    if (sel != null && selText != null) ToggleChip("Edit text", false) { onEditText(sel) }
-                    if (sel == null) Text("Tap the page to place a comment", fontSize = 12.sp, color = c.onBar.copy(alpha = 0.6f))
+        val mode = when {
+            showWidth -> 1
+            showText -> 2
+            tool == Tool.Select && sel == null -> 3
+            tool == Tool.Erase -> 4
+            else -> 0
+        }
+        AnimatedContent(
+            mode,
+            transitionSpec = { fadeIn(tween(170)) togetherWith fadeOut(tween(100)) using SizeTransform(clip = false) },
+            label = "options",
+        ) { m ->
+            Column {
+                when (m) {
+                    1 -> LabeledSlider("Thickness", widthNow ?: 1f, if (isHighlighter) 4f..40f else 0.5f..12f) { vm.setWidth(it) }
+                    2 -> {
+                        val size = selText?.fontSize ?: vm.textSize
+                        val bold = selText?.bold ?: vm.textBold
+                        LabeledSlider("Text size", size, 8f..48f) { vm.setTextStyle(size = it) }
+                        Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            ToggleChip("Bold", bold) { vm.setTextStyle(bold = !bold, coalesce = false) }
+                            if (sel != null && selText != null) ToggleChip("Edit text", false) { onEditText(sel) }
+                            if (sel == null) Text("Tap the page to place a comment", fontSize = 12.sp, color = c.onBar.copy(alpha = 0.6f))
+                        }
+                    }
+                    3 -> Hint("Tap a mark to select it, then drag to move or use the dots to resize")
+                    4 -> Hint("Tap or drag over a mark to erase it")
+                    else -> {}
                 }
             }
-            tool == Tool.Select && sel == null -> Hint("Tap a mark to select it, then drag to move or use the dots to resize")
-            tool == Tool.Erase -> Hint("Tap or drag over a mark to erase it")
         }
 
         Spacer(Modifier.height(4.dp))
