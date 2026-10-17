@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -41,6 +42,7 @@ import app.pteronpdf.pdf.ReaderViewModel
 import app.pteronpdf.theme.Fonts
 import app.pteronpdf.theme.PteronTheme
 import app.pteronpdf.ui.HomeScreen
+import app.pteronpdf.ui.ImagesToPdfScreen
 import app.pteronpdf.ui.ReaderScreen
 import app.pteronpdf.ui.SettingsScreen
 
@@ -53,6 +55,10 @@ private data class Opened(val uri: Uri, val seq: Int)
 class MainActivity : ComponentActivity() {
     private var opened by mutableStateOf<Opened?>(null)
     private var seq = 0
+    /** Bumps every time the app comes back to the front, so the home screen re-checks file access after the system settings page. */
+    private var resumeTick by mutableIntStateOf(0)
+
+    override fun onResume() { super.onResume(); resumeTick++ }
 
     private fun openPdf(u: Uri) { seq++; opened = Opened(u, seq) }
 
@@ -71,6 +77,7 @@ class MainActivity : ComponentActivity() {
             val font = remember(settings.font) { Fonts.family(ctx, settings.font) }
             PteronTheme(settings.preset, settings.darkMode, font) {
                 var showSettings by remember { mutableStateOf(false) }
+                var showImages by remember { mutableStateOf(false) }
 
                 // Eye protection: a warm Multiply layer over the finished frame (black stays black, white turns warm).
                 // The strength glides when switched on/off or dragged; it is read at draw time, so it costs no recomposition,
@@ -104,7 +111,10 @@ class MainActivity : ComponentActivity() {
                         modifier = Modifier.fillMaxSize(), label = "screen",
                     ) { doc ->
                         if (doc == null) {
-                            HomeScreen(prefs = prefs, settings = settings, onOpen = ::openPdf, onSettings = { showSettings = true })
+                            HomeScreen(
+                                prefs = prefs, settings = settings, resumeTick = resumeTick,
+                                onOpen = ::openPdf, onSettings = { showSettings = true }, onImages = { showImages = true },
+                            )
                         } else {
                             val vm: ReaderViewModel = viewModel(key = "${doc.uri}#${doc.seq}", factory = object : ViewModelProvider.Factory {
                                 @Suppress("UNCHECKED_CAST")
@@ -128,6 +138,17 @@ class MainActivity : ComponentActivity() {
                         exit = slideOutHorizontally(tween(260, easing = FastOutSlowInEasing)) { it } + fadeOut(tween(200)),
                     ) {
                         SettingsScreen(settings, onClose = { showSettings = false })
+                    }
+                    // Images -> PDF: also an overlay, so the home screen underneath keeps its state.
+                    AnimatedVisibility(
+                        showImages,
+                        enter = slideInHorizontally(tween(320, easing = FastOutSlowInEasing)) { -it } + fadeIn(tween(200)),
+                        exit = slideOutHorizontally(tween(260, easing = FastOutSlowInEasing)) { -it } + fadeOut(tween(200)),
+                    ) {
+                        ImagesToPdfScreen(
+                            onClose = { showImages = false },
+                            onOpen = { u -> showImages = false; openPdf(u) },
+                        )
                     }
                 }
             }
