@@ -194,7 +194,7 @@ fun ReaderScreen(vm: ReaderViewModel, settings: AppSettings, onClose: () -> Unit
                                 BarIconButton(PIcon.More, "More", { showMenu = true })
                                 DropdownMenu(
                                     expanded = showMenu, onDismissRequest = { showMenu = false },
-                                    modifier = Modifier.width(230.dp),
+                                    modifier = Modifier.width(188.dp),
                                     shape = RoundedCornerShape(20.dp), containerColor = c.bar,
                                 ) {
                                     MenuItem(PIcon.Grid, "Pages") { showMenu = false; showThumbs = true }
@@ -332,6 +332,7 @@ private val ToolDefs = listOf(
     ToolDef(Tool.Arrow, PIcon.Arrow, "Arrow"),
     ToolDef(Tool.Rect, PIcon.Rect, "Square"),
     ToolDef(Tool.Circle, PIcon.Circle, "Circle"),
+    ToolDef(Tool.Tick, PIcon.Check, "Tick"),
     ToolDef(Tool.Text, PIcon.Text, "Comment"),
     ToolDef(Tool.Erase, PIcon.Eraser, "Erase"),
 )
