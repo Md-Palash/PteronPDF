@@ -52,6 +52,11 @@ class Prefs(context: Context) {
         get() = sp.getBoolean("eyeProtection", false)
         set(v) = sp.edit().putBoolean("eyeProtection", v).apply()
 
+    /** Set once the "allow access to your PDFs" prompt has been shown, so it is not repeated on every launch. */
+    var storagePrompted: Boolean
+        get() = sp.getBoolean("storagePrompted", false)
+        set(v) = sp.edit().putBoolean("storagePrompted", v).apply()
+
     var keepAwake: Boolean
         get() = sp.getBoolean("keepAwake", false)
         set(v) = sp.edit().putBoolean("keepAwake", v).apply()
