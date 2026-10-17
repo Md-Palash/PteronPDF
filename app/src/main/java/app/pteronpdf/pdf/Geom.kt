@@ -35,6 +35,11 @@ object Geom {
                 val r = rectOf(m.p0, m.p1)
                 listOf(listOf(PointF(r.left, r.top), PointF(r.right, r.top), PointF(r.right, r.bottom), PointF(r.left, r.bottom), PointF(r.left, r.top)))
             }
+            ShapeKind.Tick -> {
+                // a check mark that fills the dragged box: short stroke down-right, long stroke up-right
+                val r = rectOf(m.p0, m.p1); val w = r.width(); val h = r.height()
+                listOf(listOf(PointF(r.left + 0.08f * w, r.top + 0.55f * h), PointF(r.left + 0.36f * w, r.top + 0.86f * h), PointF(r.left + 0.92f * w, r.top + 0.14f * h)))
+            }
             ShapeKind.Circle -> {
                 val r = rectOf(m.p0, m.p1)
                 val cx = r.centerX(); val cy = r.centerY(); val rx = r.width() / 2; val ry = r.height() / 2
@@ -63,10 +68,13 @@ object Geom {
 
     fun bounds(m: Markup): RectF = when (m) {
         is Markup.Text -> RectF(m.rect)
-        else -> {
-            val pts = strokes(m).flatten()
-            RectF(pts.minOf { it.x }, pts.minOf { it.y }, pts.maxOf { it.x }, pts.maxOf { it.y })
-        }
+        is Markup.Shape -> if (m.kind == ShapeKind.Tick) rectOf(m.p0, m.p1) else strokeBounds(m)
+        else -> strokeBounds(m)
+    }
+
+    private fun strokeBounds(m: Markup): RectF {
+        val pts = strokes(m).flatten()
+        return RectF(pts.minOf { it.x }, pts.minOf { it.y }, pts.maxOf { it.x }, pts.maxOf { it.y })
     }
 
     // ───────── hit testing ─────────

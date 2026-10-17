@@ -144,18 +144,6 @@ class PdfEngine private constructor(
 
     private fun pt(p: PointF) = Point(p.x, p.y)
 
-    private fun addSync(pageIndex: Int, id: Long, m: Markup) {
-        val page = doc.loadPage(pageIndex) as PDFPage
-        try { create(page, id, m) } finally { page.destroy() }
-    }
-
-    private fun removeSync(pageIndex: Int, id: Long) {
-        val page = doc.loadPage(pageIndex) as PDFPage
-        try {
-            page.annotations?.firstOrNull { nameOf(it) == "pt-$id" }?.let { page.deleteAnnotation(it) }
-        } finally { page.destroy() }
-    }
-
     private fun ink(page: PDFPage, m: Markup, width: Float, opacity: Float): PDFAnnotation =
         page.createAnnotation(PDFAnnotation.TYPE_INK).apply {
             setInkList(Geom.strokes(m).map { line -> line.map(::pt).toTypedArray() }.toTypedArray())
@@ -168,7 +156,7 @@ class PdfEngine private constructor(
             is Markup.Curve -> ink(page, m, m.width, 1f)
             is Markup.Shape -> when (m.kind) {
                 // Arrow is stored as a small ink drawing so the arrow head is exactly what you saw on screen.
-                ShapeKind.Arrow -> ink(page, m, m.width, 1f)
+                ShapeKind.Arrow, ShapeKind.Tick -> ink(page, m, m.width, 1f)
                 ShapeKind.Line -> page.createAnnotation(PDFAnnotation.TYPE_LINE).apply {
                     setLine(pt(m.p0), pt(m.p1)); setColor(rgb(m.color)); setBorderWidth(m.width)
                 }
@@ -188,7 +176,8 @@ class PdfEngine private constructor(
             }
         }
         a.`object`.put("NM", doc.newString("pt-$id"))
-        a.update()
+        a.setFlags(4)           // "print" flag: viewers and printers must draw it
+        a.update()              // builds the appearance stream every viewer paints from
     }
 
     // ───────────── save ─────────────
@@ -196,20 +185,58 @@ class PdfEngine private constructor(
      * Writes [items] into the document, saves a full rewrite to a temp file, copies it to [target], then takes the items
      * out of the in-memory document again (so the live document never holds them twice). Temp is always removed.
      */
-    suspend fun saveWith(target: Uri, items: List<Item>) = withContext(io) {
-        val added = ArrayList<Item>()
+    suspend fun saveWith(target: Uri, items: List<Item>): Int = withContext(io) {
         val tmp = File.createTempFile("pteron", ".pdf", context.cacheDir)
+        // Every page that gets a mark stays OPEN until the file is written: MuPDF builds each mark's drawing (its appearance
+        // stream, which is what other PDF viewers paint) for open pages, so closing them early could leave marks that only
+        // MuPDF itself can see.
+        val open = LinkedHashMap<Int, PDFPage>()
+        val added = ArrayList<Pair<PDFPage, Item>>()
+        var missing = 0
         try {
-            for (it in items) { addSync(it.page, it.id, it.m); added += it }
-            doc.save(tmp.absolutePath, "garbage=compact,compress")
+            for (it in items) {
+                val pg = open.getOrPut(it.page) { doc.loadPage(it.page) as PDFPage }
+                create(pg, it.id, it.m); added += pg to it
+            }
+            open.values.forEach { runCatching { it.update() } }
+            try { doc.save(tmp.absolutePath, "garbage=compact,compress,appearance=all") }
+            catch (t: Throwable) { doc.save(tmp.absolutePath, "garbage=compact,compress") }
+            // Read the finished file back and count the marks that really made it in (with a drawing), so a failure is reported, never silent.
+            if (items.isNotEmpty()) missing = items.size - countEmbedded(tmp, items)
             context.contentResolver.openOutputStream(target, "wt")!!.use { out ->
                 FileInputStream(tmp).use { it.copyTo(out, 64 * 1024) }
             }
         } finally {
             tmp.delete()
-            added.forEach { runCatching { removeSync(it.page, it.id) } }
+            added.forEach { (pg, it) -> runCatching { pg.annotations?.firstOrNull { a -> nameOf(a) == "pt-${it.id}" }?.let(pg::deleteAnnotation) } }
+            open.values.forEach { runCatching { it.destroy() } }
         }
+        missing.coerceAtLeast(0)
     }
+
+    /** How many of [items] are present (by their /NM name) in the saved file at [file]. */
+    private fun countEmbedded(file: File, items: List<Item>): Int = runCatching {
+        val want = items.groupBy { it.page }
+        val d = com.artifex.mupdf.fitz.Document.openDocument(file.absolutePath) as PDFDocument
+        try {
+            var found = 0
+            for ((pageIndex, list) in want) {
+                val page = d.loadPage(pageIndex) as PDFPage
+                try {
+                    val names = page.annotations?.mapNotNull { nameOf(it) }?.toSet() ?: emptySet()
+                    found += list.count { "pt-${it.id}" in names && hasDrawing(page, "pt-${it.id}") }
+                } finally { page.destroy() }
+            }
+            found
+        } finally { d.destroy() }
+    }.getOrDefault(items.size)      // if the check itself can't run, don't raise a false alarm
+
+    /** True when the mark named [nm] carries its own drawing (/AP), which is what non-MuPDF viewers paint. Unknown -> assume yes. */
+    private fun hasDrawing(page: PDFPage, nm: String): Boolean = runCatching {
+        val a = page.annotations?.firstOrNull { nameOf(it) == nm } ?: return@runCatching false
+        val ap = a.`object`.get("AP")
+        ap != null && !ap.isNull
+    }.getOrDefault(true)
 
     suspend fun close() = withContext(io) {
         runCatching { doc.destroy() }
