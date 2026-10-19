@@ -156,7 +156,7 @@ class PdfEngine private constructor(
             is Markup.Curve -> ink(page, m, m.width, 1f)
             is Markup.Shape -> when (m.kind) {
                 // Arrow is stored as a small ink drawing so the arrow head is exactly what you saw on screen.
-                ShapeKind.Arrow, ShapeKind.Tick -> ink(page, m, m.width, 1f)
+                ShapeKind.Arrow -> ink(page, m, m.width, 1f)
                 ShapeKind.Line -> page.createAnnotation(PDFAnnotation.TYPE_LINE).apply {
                     setLine(pt(m.p0), pt(m.p1)); setColor(rgb(m.color)); setBorderWidth(m.width)
                 }

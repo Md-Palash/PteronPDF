@@ -64,7 +64,7 @@ class ReaderViewModel(app: Application, val uri: Uri) : AndroidViewModel(app) {
     var color by mutableIntStateOf(0xFF0A84FF.toInt()); private set
     /** Stroke width per tool, in PDF points. */
     val widths = mutableStateMapOf(
-        Tool.Pen to 1.4f, Tool.Highlighter to 12f, Tool.Line to 2f, Tool.Curve to 2f, Tool.Arrow to 2f, Tool.Rect to 2f, Tool.Circle to 2f, Tool.Tick to 3f,
+        Tool.Pen to 1.4f, Tool.Highlighter to 12f, Tool.Line to 2f, Tool.Curve to 2f, Tool.Arrow to 2f, Tool.Rect to 2f, Tool.Circle to 2f,
     )
     var textSize by mutableFloatStateOf(14f)     // PDF points
     var textBold by mutableStateOf(false)
@@ -245,7 +245,7 @@ class ReaderViewModel(app: Application, val uri: Uri) : AndroidViewModel(app) {
         is Markup.Ink -> if (m.opacity < 1f) Tool.Highlighter else Tool.Pen
         is Markup.Curve -> Tool.Curve
         is Markup.Shape -> when (m.kind) {
-            ShapeKind.Line -> Tool.Line; ShapeKind.Arrow -> Tool.Arrow; ShapeKind.Rect -> Tool.Rect; ShapeKind.Circle -> Tool.Circle; ShapeKind.Tick -> Tool.Tick
+            ShapeKind.Line -> Tool.Line; ShapeKind.Arrow -> Tool.Arrow; ShapeKind.Rect -> Tool.Rect; ShapeKind.Circle -> Tool.Circle
         }
         else -> null
     }

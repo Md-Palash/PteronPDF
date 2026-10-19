@@ -17,7 +17,7 @@ sealed interface Markup {
         override fun withColor(c: Int) = copy(color = c)
     }
 
-    /** Straight line, arrow, square, circle, tick mark: defined by two corner/end points. */
+    /** Straight line, arrow, square, circle: defined by two corner/end points. */
     data class Shape(val kind: ShapeKind, val p0: PointF, val p1: PointF, override val color: Int, val width: Float) : Markup {
         override fun withColor(c: Int) = copy(color = c)
     }
@@ -34,9 +34,9 @@ sealed interface Markup {
 
 }
 
-enum class ShapeKind { Line, Arrow, Rect, Circle, Tick }
+enum class ShapeKind { Line, Arrow, Rect, Circle }
 
-enum class Tool { None, Select, Pen, Highlighter, Line, Curve, Arrow, Rect, Circle, Tick, Text, Erase }
+enum class Tool { None, Select, Pen, Highlighter, Line, Curve, Arrow, Rect, Circle, Text, Erase }
 
 /** A markup placed on a page. [id] is also written to the PDF annotation's /NM ("pt-<id>"). */
 data class Item(val id: Long, val page: Int, val m: Markup)
