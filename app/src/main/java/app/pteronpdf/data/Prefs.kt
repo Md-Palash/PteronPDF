@@ -57,6 +57,10 @@ class Prefs(context: Context) {
         get() = sp.getBoolean("storagePrompted", false)
         set(v) = sp.edit().putBoolean("storagePrompted", v).apply()
 
+    var bookMode: Boolean
+        get() = sp.getBoolean("bookMode", false)
+        set(v) = sp.edit().putBoolean("bookMode", v).apply()
+
     var keepAwake: Boolean
         get() = sp.getBoolean("keepAwake", false)
         set(v) = sp.edit().putBoolean("keepAwake", v).apply()
@@ -101,6 +105,7 @@ class AppSettings(private val p: Prefs) {
     var font by mutableStateOf(p.font); private set
     var readingMode by mutableStateOf(p.readingMode); private set
     var eyeProtection by mutableStateOf(p.eyeProtection); private set
+    var bookMode by mutableStateOf(p.bookMode); private set
     var keepAwake by mutableStateOf(p.keepAwake); private set
     var rememberPosition by mutableStateOf(p.rememberPosition); private set
 
@@ -114,6 +119,7 @@ class AppSettings(private val p: Prefs) {
     fun changeFont(v: AppFont) { font = v; p.font = v }
     fun changeReadingMode(v: Boolean) { readingMode = v; p.readingMode = v }
     fun changeEyeProtection(v: Boolean) { eyeProtection = v; p.eyeProtection = v }
+    fun changeBookMode(v: Boolean) { bookMode = v; p.bookMode = v }
     fun changeKeepAwake(v: Boolean) { keepAwake = v; p.keepAwake = v }
     fun changeRememberPosition(v: Boolean) { rememberPosition = v; p.rememberPosition = v }
 }
