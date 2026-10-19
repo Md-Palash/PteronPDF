@@ -1,7 +1,9 @@
 package app.pteronpdf.ui
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -20,7 +22,7 @@ import androidx.compose.ui.semantics.semantics
  * material-icons-extended (~10 MB of classes) in the APK.
  */
 enum class PIcon { Back, Open, Save, Search, Up, Down, Close, Undo, Redo, Edit, Grid, Theme, Pen, Highlighter,
-    Line, Curve, Arrow, Rect, Circle, Text, Eraser, Check, More, Select, Settings, Trash, Chevron, Palette, Type, Book, Info, Moon, Sun, Copy, Image }
+    Line, Curve, Arrow, Rect, Circle, Text, Eraser, Check, More, Select, Settings, Trash, Chevron, Palette, Type, Book, Info, Moon, Sun, Copy, Image, ArrowRight, Pdf, Plus }
 
 @Composable
 fun PIconView(icon: PIcon, tint: Color, modifier: Modifier = Modifier.size(22.dp), desc: String? = null) {
@@ -82,6 +84,13 @@ fun PIconView(icon: PIcon, tint: Color, modifier: Modifier = Modifier.size(22.dp
                 drawCircle(tint, 1.7f * k, p(9f, 10f))
                 drawPath(path { moveTo(4f * k, 18f * k); lineTo(9.5f * k, 13.5f * k); lineTo(13f * k, 16.5f * k); lineTo(16f * k, 13f * k); lineTo(20f * k, 17f * k) }, tint, style = st)
             }
+            PIcon.ArrowRight -> { line(p(4f, 12f), p(19f, 12f)); line(p(13f, 6f), p(19f, 12f)); line(p(13f, 18f), p(19f, 12f)) }
+            PIcon.Plus -> { line(p(12f, 5f), p(12f, 19f)); line(p(5f, 12f), p(19f, 12f)) }
+            PIcon.Pdf -> {
+                // a page with a folded corner (the "PDF" letters are laid over it by ImageToPdfGlyph)
+                drawPath(path { moveTo(5.5f * k, 2.5f * k); lineTo(14.5f * k, 2.5f * k); lineTo(19.5f * k, 7.5f * k); lineTo(19.5f * k, 21.5f * k); lineTo(5.5f * k, 21.5f * k); close() }, tint, style = st)
+                drawPath(path { moveTo(14.5f * k, 2.5f * k); lineTo(14.5f * k, 7.5f * k); lineTo(19.5f * k, 7.5f * k) }, tint, style = st)
+            }
             PIcon.Copy -> {
                 drawRoundRect(tint, p(9f, 9f), Size(11f * k, 11f * k), CornerRadius(2.2f * k), style = st)
                 drawPath(path { moveTo(8.5f * k, 15f * k); lineTo(5.5f * k, 15f * k); lineTo(5.5f * k, 4.5f * k); lineTo(15f * k, 4.5f * k); lineTo(15f * k, 8.5f * k) }, tint, style = st)
@@ -135,6 +144,28 @@ fun PIconView(icon: PIcon, tint: Color, modifier: Modifier = Modifier.size(22.dp
             PIcon.Type -> { line(p(5f, 18f), p(10f, 5f)); line(p(10f, 5f), p(15f, 18f)); line(p(7f, 13f), p(13f, 13f)); line(p(17f, 11f), p(20f, 11f)); line(p(18.5f, 11f), p(18.5f, 18f)) }
             PIcon.Book -> { drawPath(path { moveTo(12f * k, 6f * k); quadraticTo(8f * k, 4f * k, 4f * k, 5.5f * k); lineTo(4f * k, 18.5f * k); quadraticTo(8f * k, 17f * k, 12f * k, 19f * k); quadraticTo(16f * k, 17f * k, 20f * k, 18.5f * k); lineTo(20f * k, 5.5f * k); quadraticTo(16f * k, 4f * k, 12f * k, 6f * k) }, tint, style = st); line(p(12f, 6f), p(12f, 19f)) }
             PIcon.Info -> { drawCircle(tint, 8.5f * k, p(12f, 12f), style = st); line(p(12f, 11f), p(12f, 16f)); drawCircle(tint, 1.1f * k, p(12f, 8f)) }
+        }
+    }
+}
+
+
+/**
+ * The "pictures become a PDF" symbol: a picture, an arrow, then a PDF page. [scale] 1 fits a normal 44 dp button.
+ */
+@Composable
+fun ImageToPdfGlyph(tint: Color, modifier: Modifier = Modifier, scale: Float = 1f) {
+    androidx.compose.foundation.layout.Row(
+        modifier, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy((1.5f * scale).dp),
+    ) {
+        PIconView(PIcon.Image, tint, Modifier.size((20f * scale).dp))
+        PIconView(PIcon.ArrowRight, tint, Modifier.size((13f * scale).dp))
+        androidx.compose.foundation.layout.Box(Modifier.size((20f * scale).dp), contentAlignment = androidx.compose.ui.Alignment.Center) {
+            PIconView(PIcon.Pdf, tint, Modifier.size((20f * scale).dp))
+            androidx.compose.material3.Text(
+                "PDF", Modifier.padding(top = (5f * scale).dp), color = tint, fontSize = (5.2f * scale).sp,
+                fontWeight = androidx.compose.ui.text.font.FontWeight.ExtraBold, maxLines = 1, softWrap = false,
+            )
         }
     }
 }

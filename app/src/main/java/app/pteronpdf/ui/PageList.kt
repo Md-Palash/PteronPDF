@@ -43,7 +43,7 @@ const val MAX_ZOOM = 4f
 fun PageList(
     vm: ReaderViewModel, engine: PdfEngine, listState: LazyListState,
     onText: (Int, PointF) -> Unit, onEditText: (Item) -> Unit, onTapEmpty: () -> Unit,
-    topPad: Dp, bottomPad: Dp,
+    topPad: Dp, bottomPad: Dp, edgeBottom: Dp,
 ) {
     val c = LocalPteron.current
     val density = LocalDensity.current
@@ -60,16 +60,22 @@ fun PageList(
 
     // Lets a mark that is being dragged scroll the list when the finger nears the top or the editing card.
     val topPx = with(density) { topPad.toPx() }
-    val bottomPx = with(density) { bottomPad.toPx() }
-    SideEffect { vm.edgeScroll = { dy -> scope.launch { listState.scrollBy(dy) } } }
+    val edgePx = with(density) { edgeBottom.toPx() }
+    // where this view sits on screen (top, height); plain numbers, not state, so layout passes never trigger recomposition
+    val frame = remember { floatArrayOf(0f, 0f) }
+    SideEffect {
+        vm.edgeScroll = { dy -> scope.launch { listState.scrollBy(dy) } }
+        vm.autoScrollTop = frame[0] + topPx + 16f * density.density
+        vm.autoScrollBottom = frame[0] + frame[1] - edgePx
+    }
 
     Box(
         Modifier.fillMaxSize().background(c.canvas)
             .onSizeChanged { viewW = it.width; viewH = it.height }
             .onGloballyPositioned {
-                val top = it.positionInRoot().y
-                vm.autoScrollTop = top + topPx + 16f * density.density
-                vm.autoScrollBottom = top + it.size.height - bottomPx
+                frame[0] = it.positionInRoot().y; frame[1] = it.size.height.toFloat()
+                vm.autoScrollTop = frame[0] + topPx + 16f * density.density
+                vm.autoScrollBottom = frame[0] + frame[1] - edgePx
             }
             .pointerInput(Unit) {
                 awaitEachGesture {
@@ -151,16 +157,15 @@ fun PageList(
 }
 
 @Composable
-private fun PageItem(
+internal fun PageItem(
     vm: ReaderViewModel, engine: PdfEngine, index: Int, pageW: Int, viewW: Int,
-    onText: (Int, PointF) -> Unit, onEditText: (Item) -> Unit,
+    onText: (Int, PointF) -> Unit, onEditText: (Item) -> Unit, trackRoot: Boolean = true,
 ) {
     val density = LocalDensity.current
     val info = engine.pages[index]
     val hPx = (pageW * info.aspect).toInt()
     // Render width: bucketed (cache hits) and capped (bounded memory).
-    val cap = (viewW * vm.renderCapFactor).toInt()
-    val renderW = (((pageW.coerceAtMost(cap) + 63) / 64) * 64).coerceAtLeast(64)
+    val renderW = renderWidthFor(vm, pageW, viewW)
     val version = vm.pageVersion(index)
 
     var bmp by remember(index) { mutableStateOf<Bitmap?>(vm.cached(index, renderW)) }
@@ -171,7 +176,7 @@ private fun PageItem(
     DisposableEffect(index) { onDispose { vm.pageRoots.remove(index) } }
     Box(
         Modifier.size(with(density) { pageW.toDp() }, with(density) { hPx.toDp() })
-            .onGloballyPositioned { vm.pageRoots[index] = Rect(it.positionInRoot(), it.size.toSize()) }
+            .onGloballyPositioned { if (trackRoot) vm.pageRoots[index] = Rect(it.positionInRoot(), it.size.toSize()) else vm.pageRoots.remove(index) }
             .shadow(5.dp, RoundedCornerShape0).background(Color.White)
     ) {
         bmp?.let { b ->
@@ -181,6 +186,12 @@ private fun PageItem(
         SearchHighlights(vm, index, info.width)
         MarkupOverlay(vm, index, info.width, onText, onEditText)
     }
+}
+
+/** Render width for a page shown [pageW] px wide: bucketed (so the cache gets hits) and capped (so memory stays bounded). */
+internal fun renderWidthFor(vm: ReaderViewModel, pageW: Int, viewW: Int): Int {
+    val cap = (viewW * vm.renderCapFactor).toInt()
+    return (((pageW.coerceAtMost(cap) + 63) / 64) * 64).coerceAtLeast(64)
 }
 
 private val RoundedCornerShape0 = androidx.compose.foundation.shape.RoundedCornerShape(2.dp)

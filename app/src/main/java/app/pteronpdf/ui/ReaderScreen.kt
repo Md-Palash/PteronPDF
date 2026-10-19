@@ -5,6 +5,8 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.*
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -56,9 +58,11 @@ fun ReaderScreen(vm: ReaderViewModel, settings: AppSettings, onClose: () -> Unit
     val c = LocalPteron.current
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
+    val book = remember { BookState(0) }
     val snackbar = remember { SnackbarHostState() }
     val engine = vm.engine
     val reading = settings.readingMode
+    val bookMode = settings.bookMode
 
     var chromeVisible by remember { mutableStateOf(true) }
     var searchOpen by remember { mutableStateOf(false) }
@@ -83,10 +87,16 @@ fun ReaderScreen(vm: ReaderViewModel, settings: AppSettings, onClose: () -> Unit
     }
 
     // restore last-read page once
-    LaunchedEffect(engine) { if (engine != null && vm.initialPage > 0) listState.scrollToItem(vm.initialPage) }
+    LaunchedEffect(engine) {
+        if (engine != null && vm.initialPage > 0) { book.jump(vm.initialPage); listState.scrollToItem(vm.initialPage) }
+    }
+
+    // one place to jump to a page, whichever way of reading is on
+    fun goToPage(i: Int) { if (bookMode) book.jump(i) else scope.launch { listState.scrollToItem(i) } }
 
     // current page = the one covering the viewport's upper third
-    LaunchedEffect(listState, engine) {
+    LaunchedEffect(listState, engine, bookMode) {
+        if (bookMode) return@LaunchedEffect          // the book keeps vm.currentPage itself
         snapshotFlow {
             val info = listState.layoutInfo
             val line = info.viewportStartOffset + (info.viewportEndOffset - info.viewportStartOffset) / 3
@@ -99,6 +109,7 @@ fun ReaderScreen(vm: ReaderViewModel, settings: AppSettings, onClose: () -> Unit
     LaunchedEffect(vm.hitIndex, vm.hits) {
         val h = vm.hits.getOrNull(vm.hitIndex) ?: return@LaunchedEffect
         val e = vm.engine ?: return@LaunchedEffect
+        if (bookMode) { book.jump(h.page); return@LaunchedEffect }
         val info = e.pages[h.page]
         val li = listState.layoutInfo
         val pageWpx = (li.viewportSize.width - 2 * with(density) { 12.dp.toPx() }) * vm.zoom
@@ -134,7 +145,10 @@ fun ReaderScreen(vm: ReaderViewModel, settings: AppSettings, onClose: () -> Unit
 
     val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val topPad = if (reading) statusTop + 8.dp else statusTop + TopBarHeight + 10.dp
-    val bottomPad = if (editing) 290.dp else 96.dp
+    // The list's bottom padding never changes: changing it when the editing card opens would re-layout every page mid-animation.
+    // It always leaves room for the card; only the auto-scroll zone for dragged marks follows the card.
+    val bottomPad = 290.dp
+    val edgeBottom = if (editing) 290.dp else 96.dp
 
     Box(Modifier.fillMaxSize().background(c.canvas)) {
         when {
@@ -144,14 +158,21 @@ fun ReaderScreen(vm: ReaderViewModel, settings: AppSettings, onClose: () -> Unit
             }
             engine == null -> CircularProgressIndicator(Modifier.align(Alignment.Center), color = c.accent)
             else -> {
-                PageList(
-                    vm, engine, listState,
+                if (bookMode) BookView(
+                    vm, engine, book, editing, topPad = topPad, panelHeight = 290.dp,
                     onText = { p, pt -> textRequest = TextReq.New(p, pt) },
                     onEditText = { textRequest = TextReq.Edit(it) },
                     onTapEmpty = { if (reading && !editing) chromeVisible = !chromeVisible },
-                    topPad = topPad, bottomPad = bottomPad,
-                )
-                Scrubber(listState, engine.pageCount, Modifier.align(Alignment.CenterEnd))
+                ) else {
+                    PageList(
+                        vm, engine, listState,
+                        onText = { p, pt -> textRequest = TextReq.New(p, pt) },
+                        onEditText = { textRequest = TextReq.Edit(it) },
+                        onTapEmpty = { if (reading && !editing) chromeVisible = !chromeVisible },
+                        topPad = topPad, bottomPad = bottomPad, edgeBottom = edgeBottom,
+                    )
+                    Scrubber(listState, engine.pageCount, Modifier.align(Alignment.CenterEnd))
+                }
                 // a mark being carried between pages is painted here, above the pages and under the bars
                 DragGhost(vm)
             }
@@ -197,6 +218,12 @@ fun ReaderScreen(vm: ReaderViewModel, settings: AppSettings, onClose: () -> Unit
                                     modifier = Modifier.width(188.dp),
                                     shape = RoundedCornerShape(20.dp), containerColor = c.bar,
                                 ) {
+                                    MenuItem(PIcon.Book, "Book mode", checked = bookMode) {
+                                        showMenu = false
+                                        if (bookMode) { val p = book.current; scope.launch { listState.scrollToItem(p) } }
+                                        else book.jump(vm.currentPage)
+                                        settings.changeBookMode(!bookMode)
+                                    }
                                     MenuItem(PIcon.Grid, "Pages") { showMenu = false; showThumbs = true }
                                     MenuItem(PIcon.Save, "Save", enabled = vm.dirty) { showMenu = false; vm.save() }
                                     MenuItem(PIcon.Copy, "Save a copy…") { showMenu = false; saveAs.launch(vm.name.removeSuffix(".pdf") + " (copy).pdf") }
@@ -226,7 +253,9 @@ fun ReaderScreen(vm: ReaderViewModel, settings: AppSettings, onClose: () -> Unit
         // ── editing card: slides up from the bottom, top corners rounded ──
         AnimatedVisibility(
             visible = editing,
-            enter = slideInVertically { it } + fadeIn(), exit = slideOutVertically { it } + fadeOut(),
+            // slide only (no fade): a fade would force the card, its shadow and everything in it through an off-screen buffer every frame
+            enter = slideInVertically(tween(260, easing = FastOutSlowInEasing)) { it },
+            exit = slideOutVertically(tween(210, easing = FastOutSlowInEasing)) { it },
             modifier = Modifier.align(Alignment.BottomCenter),
         ) {
             EditPanel(vm, onCustomColor = { showColor = true }, onEditText = { textRequest = TextReq.Edit(it) })
@@ -237,7 +266,7 @@ fun ReaderScreen(vm: ReaderViewModel, settings: AppSettings, onClose: () -> Unit
 
     // ── sheets & dialogs ──
     if (showThumbs && engine != null) ModalBottomSheet(onDismissRequest = { showThumbs = false }, containerColor = c.bar) {
-        ThumbnailGrid(vm, engine, onPick = { i -> showThumbs = false; scope.launch { listState.scrollToItem(i) } })
+        ThumbnailGrid(vm, engine, onPick = { i -> showThumbs = false; goToPage(i) })
     }
     if (showTheme) ModalBottomSheet(onDismissRequest = { showTheme = false }, containerColor = c.bar) {
         ThemeSheetContent(settings)
@@ -284,10 +313,11 @@ fun ReaderScreen(vm: ReaderViewModel, settings: AppSettings, onClose: () -> Unit
 
 /** A menu entry with its icon in front of the label. */
 @Composable
-private fun MenuItem(icon: PIcon, label: String, enabled: Boolean = true, onClick: () -> Unit) {
+private fun MenuItem(icon: PIcon, label: String, enabled: Boolean = true, checked: Boolean? = null, onClick: () -> Unit) {
     val c = LocalPteron.current
     DropdownMenuItem(
         text = { Text(label) }, onClick = onClick, enabled = enabled,
+        trailingIcon = if (checked == true) ({ PIconView(PIcon.Check, c.accent, Modifier.size(18.dp)) }) else null,
         leadingIcon = { PIconView(icon, if (enabled) c.onBar else c.onBar.copy(alpha = 0.38f), Modifier.size(20.dp)) },
     )
 }
@@ -332,7 +362,6 @@ private val ToolDefs = listOf(
     ToolDef(Tool.Arrow, PIcon.Arrow, "Arrow"),
     ToolDef(Tool.Rect, PIcon.Rect, "Square"),
     ToolDef(Tool.Circle, PIcon.Circle, "Circle"),
-    ToolDef(Tool.Tick, PIcon.Check, "Tick"),
     ToolDef(Tool.Text, PIcon.Text, "Comment"),
     ToolDef(Tool.Erase, PIcon.Eraser, "Erase"),
 )
@@ -355,7 +384,6 @@ private fun EditPanel(vm: ReaderViewModel, onCustomColor: () -> Unit, onEditText
 
     Column(
         Modifier.fillMaxWidth().shadow(14.dp, shape).clip(shape).background(c.bar)
-            .animateContentSize(tween(220))        // rows that come and go (colours, thickness, text options) grow the card smoothly
             .navigationBarsPadding().padding(top = 8.dp, bottom = 8.dp)
     ) {
         Box(Modifier.align(Alignment.CenterHorizontally).size(width = 36.dp, height = 4.dp).clip(RoundedCornerShape(2.dp)).background(c.onBar.copy(alpha = 0.22f)))
@@ -366,8 +394,10 @@ private fun EditPanel(vm: ReaderViewModel, onCustomColor: () -> Unit, onEditText
             ToolDefs.forEach { d ->
                 val on = tool == d.tool
                 // the highlight fades between tools instead of jumping (it fades from the accent at zero alpha, never through grey)
-                val bg by animateColorAsState(if (on) c.accent else c.accent.copy(alpha = 0f), tween(180), label = "tool")
-                val fg by animateColorAsState(if (on) c.onAccent else c.onBar, tween(180), label = "toolText")
+                // one animated value per tool (not one per colour); the colours are blended from it when drawn
+                val k by animateFloatAsState(if (on) 1f else 0f, tween(180), label = "tool")
+                val bg = c.accent.copy(alpha = k)
+                val fg = androidx.compose.ui.graphics.lerp(c.onBar, c.onAccent, k)
                 Column(
                     Modifier.width(60.dp).pressable(RoundedCornerShape(14.dp), bg) { vm.chooseTool(d.tool) }.padding(vertical = 8.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,

@@ -164,7 +164,7 @@ fun MarkupOverlay(
                     }
                 }
 
-                Tool.Pen, Tool.Highlighter, Tool.Line, Tool.Curve, Tool.Arrow, Tool.Rect, Tool.Circle, Tool.Tick -> {
+                Tool.Pen, Tool.Highlighter, Tool.Line, Tool.Curve, Tool.Arrow, Tool.Rect, Tool.Circle -> {
                     vm.select(null)
                     val col = vm.color
                     val w = vm.widths[tool] ?: 2f
@@ -183,10 +183,6 @@ fun MarkupOverlay(
                             buildMarkup(tool, start, toPdf(end), pts, col, w)?.let { vm.addMarkup(pageIndex, it, selectIt = false) }
                         } else if (far) {
                             buildMarkup(tool, start, toPdf(end), pts, col, w)?.let { vm.addMarkup(pageIndex, it) }
-                        } else if (tool == Tool.Tick) {
-                            // a plain tap drops a ready-sized tick centred on the finger
-                            val h = 14f
-                            buildMarkup(tool, PointF(start.x - h, start.y - h), PointF(start.x + h, start.y + h), pts, col, w)?.let { vm.addMarkup(pageIndex, it) }
                         }
                     }
                 }
@@ -277,7 +273,6 @@ private fun buildMarkup(tool: Tool, a: PointF, b: PointF, pts: List<PointF>, col
     Tool.Arrow -> Markup.Shape(ShapeKind.Arrow, a, b, color, w)
     Tool.Rect -> Markup.Shape(ShapeKind.Rect, a, b, color, w)
     Tool.Circle -> Markup.Shape(ShapeKind.Circle, a, b, color, w)
-    Tool.Tick -> Markup.Shape(ShapeKind.Tick, a, b, color, w)
     Tool.Curve -> {
         // Start with a gentle bow; drag the middle handle afterwards to reshape.
         val mx = (a.x + b.x) / 2; val my = (a.y + b.y) / 2

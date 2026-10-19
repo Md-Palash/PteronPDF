@@ -19,6 +19,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -91,7 +93,14 @@ fun HomeScreen(
     Box(Modifier.fillMaxSize().background(c.canvas).statusBarsPadding().navigationBarsPadding()) {
         Column(Modifier.fillMaxSize().padding(horizontal = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                PillCard { BarIconButton(PIcon.Image, "Images to PDF", onImages) }
+                PillCard {
+                    // picture -> arrow -> PDF: says what the tool does without a label
+                    Box(
+                        Modifier.height(44.dp).pressable(RoundedCornerShape(22.dp), onClick = onImages).padding(horizontal = 12.dp)
+                            .semantics { contentDescription = "Images to PDF" },
+                        contentAlignment = Alignment.Center,
+                    ) { ImageToPdfGlyph(c.onBar) }
+                }
                 PillCard {
                     // shows what you will switch TO: a moon while the app is light, a sun while it is dark
                     BarIconButton(
