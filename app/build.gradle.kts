@@ -41,7 +41,11 @@ android {
     kotlinOptions {
         jvmTarget = "17"
         // Skip the null-check calls Kotlin inserts into every function: smaller dex, slightly faster on low-end phones.
-        freeCompilerArgs += listOf("-Xno-param-assertions", "-Xno-call-assertions", "-Xno-receiver-assertions")
+        freeCompilerArgs += listOf(
+            "-Xno-param-assertions", "-Xno-call-assertions", "-Xno-receiver-assertions",
+            // lambdas and string templates become small invokedynamic calls instead of one generated class each: smaller dex, less to load at start
+            "-Xlambdas=indy", "-Xsam-conversions=indy", "-Xstring-concat=indy-with-constants",
+        )
     }
     buildFeatures { compose = true }
 
