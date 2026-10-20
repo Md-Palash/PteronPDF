@@ -1,9 +1,7 @@
 package app.pteronpdf.ui
 
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -21,8 +19,8 @@ import androidx.compose.ui.semantics.semantics
  * Hand-drawn line icons (24x24 grid) — zero icon-library dependency, so no
  * material-icons-extended (~10 MB of classes) in the APK.
  */
-enum class PIcon { Back, Open, Save, Search, Up, Down, Close, Undo, Redo, Edit, Grid, Theme, Pen, Highlighter,
-    Line, Curve, Arrow, Rect, Circle, Text, Eraser, Check, More, Select, Settings, Trash, Chevron, Palette, Type, Book, Info, Moon, Sun, Copy, Image, ArrowRight, Pdf, Plus }
+enum class PIcon { Back, Open, Save, Search, Up, Down, Close, Undo, Redo, Edit, Grid, Pen, Highlighter,
+    Line, Curve, Arrow, Rect, Circle, Text, Eraser, Check, More, Select, Settings, Trash, Chevron, Palette, Book, Info, Moon, Sun, Copy, Image, ArrowRight, Pdf, Plus }
 
 @Composable
 fun PIconView(icon: PIcon, tint: Color, modifier: Modifier = Modifier.size(22.dp), desc: String? = null) {
@@ -58,7 +56,6 @@ fun PIconView(icon: PIcon, tint: Color, modifier: Modifier = Modifier.size(22.dp
                 line(p(13.5f, 6.5f), p(17.5f, 10.5f))
             }
             PIcon.Grid -> listOf(4f to 4f, 13.5f to 4f, 4f to 13.5f, 13.5f to 13.5f).forEach { (x, y) -> drawRoundRect(tint, p(x, y), Size(6.5f * k, 6.5f * k), CornerRadius(1.5f * k), style = st) }
-            PIcon.Theme -> { drawCircle(tint, 8f * k, p(12f, 12f), style = st); drawPath(path { moveTo(12f * k, 4f * k); arcTo(androidx.compose.ui.geometry.Rect(p(4f, 4f), Size(16f * k, 16f * k)), -90f, 180f, false); close() }, tint) }
             PIcon.Pen -> {
                 // a ballpoint pen: slanted barrel, a cap band near the top, a tapered tip and a dot of ink at the point
                 drawPath(path { moveTo(15f * k, 3.5f * k); lineTo(20.5f * k, 9f * k); lineTo(10f * k, 19.5f * k); lineTo(4.5f * k, 14f * k); close() }, tint, style = st)
@@ -80,17 +77,16 @@ fun PIconView(icon: PIcon, tint: Color, modifier: Modifier = Modifier.size(22.dp
             PIcon.Curve -> drawPath(path { moveTo(4f * k, 18f * k); quadraticTo(6f * k, 4f * k, 20f * k, 6f * k) }, tint, style = st)
             PIcon.Arrow -> { line(p(5f, 19f), p(19f, 5f)); line(p(8f, 5f), p(19f, 5f)); line(p(19f, 5f), p(19f, 16f)) }
             PIcon.Image -> {
-                drawRoundRect(tint, p(3.5f, 4.5f), Size(17f * k, 15f * k), CornerRadius(2.5f * k), style = st)
-                drawCircle(tint, 1.7f * k, p(9f, 10f))
-                drawPath(path { moveTo(4f * k, 18f * k); lineTo(9.5f * k, 13.5f * k); lineTo(13f * k, 16.5f * k); lineTo(16f * k, 13f * k); lineTo(20f * k, 17f * k) }, tint, style = st)
+                drawRoundRect(tint, p(2.5f, 3.5f), Size(19f * k, 17f * k), CornerRadius(3f * k), style = st)
+                drawCircle(tint, 1.9f * k, p(8.5f, 9f))
+                drawPath(path { moveTo(3.5f * k, 17.5f * k); lineTo(9f * k, 12.5f * k); lineTo(13f * k, 16f * k); lineTo(16f * k, 12.5f * k); lineTo(20.5f * k, 17f * k) }, tint, style = st)
             }
             PIcon.ArrowRight -> { line(p(4f, 12f), p(19f, 12f)); line(p(13f, 6f), p(19f, 12f)); line(p(13f, 18f), p(19f, 12f)) }
             PIcon.Plus -> { line(p(12f, 5f), p(12f, 19f)); line(p(5f, 12f), p(19f, 12f)) }
             PIcon.Pdf -> {
-                // a page with a folded corner and a few lines of text
-                drawPath(path { moveTo(5.5f * k, 2.5f * k); lineTo(14.5f * k, 2.5f * k); lineTo(19.5f * k, 7.5f * k); lineTo(19.5f * k, 21.5f * k); lineTo(5.5f * k, 21.5f * k); close() }, tint, style = st)
-                drawPath(path { moveTo(14.5f * k, 2.5f * k); lineTo(14.5f * k, 7.5f * k); lineTo(19.5f * k, 7.5f * k) }, tint, style = st)
-                line(p(9f, 13f), p(16f, 13f)); line(p(9f, 17f), p(16f, 17f))
+                // an empty page with a folded corner
+                drawPath(path { moveTo(4f * k, 2f * k); lineTo(14.5f * k, 2f * k); lineTo(20f * k, 7.5f * k); lineTo(20f * k, 22f * k); lineTo(4f * k, 22f * k); close() }, tint, style = st)
+                drawPath(path { moveTo(14.5f * k, 2f * k); lineTo(14.5f * k, 7.5f * k); lineTo(20f * k, 7.5f * k) }, tint, style = st)
             }
             PIcon.Copy -> {
                 drawRoundRect(tint, p(9f, 9f), Size(11f * k, 11f * k), CornerRadius(2.2f * k), style = st)
@@ -142,7 +138,6 @@ fun PIconView(icon: PIcon, tint: Color, modifier: Modifier = Modifier.size(22.dp
                 drawCircle(tint, 8.5f * k, p(12f, 12f), style = st)
                 drawCircle(tint, 1.3f * k, p(8.5f, 10f)); drawCircle(tint, 1.3f * k, p(12f, 7.5f)); drawCircle(tint, 1.3f * k, p(15.5f, 10f))
             }
-            PIcon.Type -> { line(p(5f, 18f), p(10f, 5f)); line(p(10f, 5f), p(15f, 18f)); line(p(7f, 13f), p(13f, 13f)); line(p(17f, 11f), p(20f, 11f)); line(p(18.5f, 11f), p(18.5f, 18f)) }
             PIcon.Book -> { drawPath(path { moveTo(12f * k, 6f * k); quadraticTo(8f * k, 4f * k, 4f * k, 5.5f * k); lineTo(4f * k, 18.5f * k); quadraticTo(8f * k, 17f * k, 12f * k, 19f * k); quadraticTo(16f * k, 17f * k, 20f * k, 18.5f * k); lineTo(20f * k, 5.5f * k); quadraticTo(16f * k, 4f * k, 12f * k, 6f * k) }, tint, style = st); line(p(12f, 6f), p(12f, 19f)) }
             PIcon.Info -> { drawCircle(tint, 8.5f * k, p(12f, 12f), style = st); line(p(12f, 11f), p(12f, 16f)); drawCircle(tint, 1.1f * k, p(12f, 8f)) }
         }
@@ -157,10 +152,10 @@ fun PIconView(icon: PIcon, tint: Color, modifier: Modifier = Modifier.size(22.dp
 fun ImageToPdfGlyph(tint: Color, modifier: Modifier = Modifier, scale: Float = 1f) {
     androidx.compose.foundation.layout.Row(
         modifier, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy((1.5f * scale).dp),
+        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy((0.5f * scale).dp),
     ) {
-        PIconView(PIcon.Image, tint, Modifier.size((20f * scale).dp))
-        PIconView(PIcon.ArrowRight, tint, Modifier.size((13f * scale).dp))
-        PIconView(PIcon.Pdf, tint, Modifier.size((20f * scale).dp))
+        PIconView(PIcon.Image, tint, Modifier.size((27f * scale).dp))
+        PIconView(PIcon.ArrowRight, tint, Modifier.size((14f * scale).dp))
+        PIconView(PIcon.Pdf, tint, Modifier.size((27f * scale).dp))
     }
 }
