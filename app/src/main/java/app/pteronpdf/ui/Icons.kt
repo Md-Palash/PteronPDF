@@ -87,9 +87,10 @@ fun PIconView(icon: PIcon, tint: Color, modifier: Modifier = Modifier.size(22.dp
             PIcon.ArrowRight -> { line(p(4f, 12f), p(19f, 12f)); line(p(13f, 6f), p(19f, 12f)); line(p(13f, 18f), p(19f, 12f)) }
             PIcon.Plus -> { line(p(12f, 5f), p(12f, 19f)); line(p(5f, 12f), p(19f, 12f)) }
             PIcon.Pdf -> {
-                // a page with a folded corner (the "PDF" letters are laid over it by ImageToPdfGlyph)
+                // a page with a folded corner and a few lines of text
                 drawPath(path { moveTo(5.5f * k, 2.5f * k); lineTo(14.5f * k, 2.5f * k); lineTo(19.5f * k, 7.5f * k); lineTo(19.5f * k, 21.5f * k); lineTo(5.5f * k, 21.5f * k); close() }, tint, style = st)
                 drawPath(path { moveTo(14.5f * k, 2.5f * k); lineTo(14.5f * k, 7.5f * k); lineTo(19.5f * k, 7.5f * k) }, tint, style = st)
+                line(p(9f, 13f), p(16f, 13f)); line(p(9f, 17f), p(16f, 17f))
             }
             PIcon.Copy -> {
                 drawRoundRect(tint, p(9f, 9f), Size(11f * k, 11f * k), CornerRadius(2.2f * k), style = st)
@@ -160,12 +161,6 @@ fun ImageToPdfGlyph(tint: Color, modifier: Modifier = Modifier, scale: Float = 1
     ) {
         PIconView(PIcon.Image, tint, Modifier.size((20f * scale).dp))
         PIconView(PIcon.ArrowRight, tint, Modifier.size((13f * scale).dp))
-        androidx.compose.foundation.layout.Box(Modifier.size((20f * scale).dp), contentAlignment = androidx.compose.ui.Alignment.Center) {
-            PIconView(PIcon.Pdf, tint, Modifier.size((20f * scale).dp))
-            androidx.compose.material3.Text(
-                "PDF", Modifier.padding(top = (5f * scale).dp), color = tint, fontSize = (5.2f * scale).sp,
-                fontWeight = androidx.compose.ui.text.font.FontWeight.ExtraBold, maxLines = 1, softWrap = false,
-            )
-        }
+        PIconView(PIcon.Pdf, tint, Modifier.size((20f * scale).dp))
     }
 }

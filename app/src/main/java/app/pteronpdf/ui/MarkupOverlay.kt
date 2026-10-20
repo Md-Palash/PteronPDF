@@ -354,10 +354,12 @@ private fun wrapLines(text: String, paint: Paint, maxW: Float): List<String> {
     return out
 }
 
+private val TextPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+
 private fun DrawScope.drawText(m: Markup.Text, s: Float) {
     val r = m.rect
     drawIntoCanvas { cv ->
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        val paint = TextPaint.apply {       // one shared Paint (drawing happens on one thread): no allocation per text mark per frame
             textSize = m.fontSize * s; color = m.color
             typeface = if (m.bold) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
         }

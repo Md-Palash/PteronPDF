@@ -4,6 +4,7 @@ import android.graphics.PointF
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.Orientation
@@ -19,9 +20,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.compose.ui.graphics.layer.drawLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
@@ -33,7 +38,10 @@ import app.pteronpdf.pdf.ReaderViewModel
 import app.pteronpdf.theme.LocalPteron
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.sin
 
 /**
  * Where the book is open and how far a page turn has got. [t] runs from -1 to 1:
@@ -72,11 +80,14 @@ fun BookView(
     LaunchedEffect(last) { if (state.current > last) state.jump(last.coerceAtLeast(0)) }
     LaunchedEffect(state.current) { vm.currentPage = state.current; vm.select(null) }
 
-    fun settle(target: Float) {
+    fun settle(target: Float, velocity: Float = 0f) {
         settleJob[0]?.cancel()
         settleJob[0] = scope.launch {
-            val ms = (abs(target - state.t) * 340f).toInt().coerceIn(120, 340)
-            animate(state.t, target, animationSpec = tween(ms, easing = FastOutSlowInEasing)) { v, _ -> state.t = v }
+            // a critically damped spring: quick, soft landing, never overshoots (an overshoot would flip the turn direction)
+            animate(
+                state.t, target, initialVelocity = if (viewW > 0) -velocity / viewW else 0f,
+                animationSpec = spring(dampingRatio = 1f, stiffness = 380f, visibilityThreshold = 0.002f),
+            ) { v, _ -> state.t = v.coerceIn(-1f, 1f) }
             if (target > 0.5f) state.current = (state.current + 1).coerceAtMost(last)
             else if (target < -0.5f) state.current = (state.current - 1).coerceAtLeast(0)
             state.t = 0f
@@ -120,10 +131,11 @@ fun BookView(
                 val t = state.t
                 settle(
                     when {
-                        t > 0f && (t > 0.3f || v < -900f) -> 1f
-                        t < 0f && (t < -0.3f || v > 900f) -> -1f
+                        t > 0f && (t > 0.22f || v < -600f) -> 1f
+                        t < 0f && (t < -0.22f || v > 600f) -> -1f
                         else -> 0f
-                    }
+                    },
+                    v,
                 )
             })
             .pointerInput(last) {
@@ -152,6 +164,15 @@ private fun pageWidth(viewW: Int, availH: Float, gutter: Float, aspect: Float): 
     return w.toInt().coerceAtLeast(1)
 }
 
+private const val STRIPS = 18          // the turning page is drawn as this many narrow bands, each bent a little differently
+private const val STEPS = 54           // finer sampling of the page's curve (three per band)
+
+/**
+ * One page of the book. The page lying still is drawn normally. The page being turned is drawn as a bent sheet: its edge
+ * leads and the part near the spine follows (so it bows like paper held by its corner), with a slight ripple travelling along it.
+ * The sheet's real shape is worked out, then the page picture is drawn through it in narrow bands, each squeezed to the width
+ * that band really covers and a touch larger as it comes toward you. Once past upright, the back of the paper shows.
+ */
 @Composable
 private fun Leaf(
     kind: Int, index: Int, state: BookState, vm: ReaderViewModel, engine: PdfEngine,
@@ -162,30 +183,94 @@ private fun Leaf(
     val pw = pageWidth(viewW, availH, gutter, info.aspect)
     val ph = pw * info.aspect
     val left = (viewW - pw) / 2f
-    val origin = TransformOrigin(left / viewW, (topPx + ph / 2f) / viewH)
     val density = LocalDensity.current
+    val layer = rememberGraphicsLayer()
+    // the sheet's outline is rebuilt only when the turn moves; these buffers are reused so a turn allocates nothing per frame
+    val xs = remember { FloatArray(STEPS + 1) }
+    val zs = remember { FloatArray(STEPS + 1) }
+    val ph0 = remember { FloatArray(STEPS) }
 
     Box(
         Modifier.fillMaxSize()
             .graphicsLayer {
-                val t = state.t
-                when (kind) {
-                    NEXT -> alpha = if (t > 0f) 1f else 0f
-                    CURRENT -> if (t > 0f) { transformOrigin = origin; rotationY = -t * 90f; cameraDistance = 22f * density.density }
-                    PREV -> if (t < 0f) { transformOrigin = origin; rotationY = -(1f + t) * 90f; cameraDistance = 22f * density.density } else alpha = 0f
-                    else -> {}
-                }
+                if (kind == NEXT) { alpha = if (state.t > 0f) 1f else 0f }
+                else if (kind == PREV && state.t >= 0f) { alpha = 0f }
             }
             .drawWithContent {
-                drawContent()
                 val t = state.t
-                // the page being lifted darkens as it turns away; the one underneath brightens as it is uncovered
-                val shade = when (kind) {
-                    CURRENT -> if (t > 0f) t * 0.45f else 0f
-                    PREV -> if (t < 0f) (1f + t) * 0.45f else 0f
-                    else -> if (t > 0f) (1f - t) * 0.28f else 0f
+                val turning = (kind == CURRENT && t > 0f) || (kind == PREV && t < 0f)
+                if (!turning) {
+                    drawContent()
+                    // the page underneath is a little dim while covered and brightens as it is uncovered
+                    if (kind == NEXT && t > 0f) {
+                        val a = (1f - t) * 0.16f
+                        if (a > 0.003f) drawRect(Color.Black.copy(alpha = a), Offset(left, topPx), Size(pw.toFloat(), ph))
+                    }
+                    return@drawWithContent
                 }
-                if (shade > 0.003f) drawRect(Color.Black.copy(alpha = shade), Offset(left, topPx), Size(pw.toFloat(), ph))
+                // p: 0 = lying flat on the right, 1 = turned over onto the left
+                val p = (if (kind == CURRENT) t else 1f + t).coerceIn(0f, 1f)
+                layer.record(this, layoutDirection, androidx.compose.ui.unit.IntSize(size.width.toInt(), size.height.toInt())) { this@drawWithContent.drawContent() }
+
+                val L = pw.toFloat()
+                val ds = L / STEPS
+                val lead = 0.55f                         // how far the free edge runs ahead of the spine
+                val ripple = 0.14f * sin(PI.toFloat() * p)
+                var x = 0f; var z = 0f
+                xs[0] = 0f; zs[0] = 0f
+                for (i in 0 until STEPS) {
+                    val u = (i + 0.5f) / STEPS
+                    var f = p * (1f + lead) - (1f - u) * lead
+                    f = f.coerceIn(0f, 1f)
+                    // a smooth ease so the sheet curves instead of folding, plus the travelling ripple
+                    val e = f * f * (3f - 2f * f)
+                    val phi = (e * PI.toFloat() + ripple * sin(u * 7f - p * 6f)).coerceIn(0f, PI.toFloat())
+                    ph0[i] = phi
+                    x += cos(phi) * ds; z += sin(phi) * ds
+                    xs[i + 1] = x; zs[i + 1] = z
+                }
+
+                val cy = topPx + ph / 2f
+                val per = STEPS / STRIPS
+                for (b in 0 until STRIPS) {
+                    val i0 = b * per; val i1 = i0 + per
+                    val x0 = left + xs[i0]; val x1 = left + xs[i1]
+                    val mid = ph0[i0 + per / 2]
+                    val zMid = (zs[i0] + zs[i1]) / 2f / L
+                    val ky = 1f + zMid * 0.10f                       // nearer the viewer = slightly larger
+                    val lo = minOf(x0, x1); val hi = maxOf(x0, x1)
+                    if (hi - lo < 0.2f) continue
+                    val srcLeft = left + i0 * ds
+                    val sw = (i1 - i0) * ds
+                    val kx = (x1 - x0) / sw
+                    withTransform({ clipRect(lo, 0f, hi + 0.8f, size.height) }) {
+                        if (kx > 0f) {
+                            withTransform({
+                                translate(left = x0 - srcLeft)
+                                scale(kx, ky, pivot = Offset(srcLeft, cy))
+                            }) { drawLayer(layer) }
+                            // bands facing away from the light are a little darker; the bend shows as soft shading
+                            val a = 0.16f * sin(mid) + 0.05f * p
+                            drawRect(Color.Black.copy(alpha = a), Offset(lo, cy - ph / 2f * ky), Size(hi - lo + 0.8f, ph * ky))
+                        } else {
+                            // the back of the paper: plain, warm and shaded
+                            val a = 0.10f + 0.10f * sin(mid)
+                            drawRect(Color(0xFFF3EEE3), Offset(lo, cy - ph / 2f * ky), Size(hi - lo + 0.8f, ph * ky))
+                            drawRect(Color.Black.copy(alpha = a), Offset(lo, cy - ph / 2f * ky), Size(hi - lo + 0.8f, ph * ky))
+                        }
+                    }
+                }
+
+                // a soft shadow thrown on the page beneath, just beyond the lifted edge
+                val edge = left + xs[STEPS]
+                if (edge < left + L - 4f) {
+                    val w = 0.30f * L
+                    val a = 0.20f * sin(PI.toFloat() * p).coerceAtLeast(0f)
+                    drawRect(
+                        Brush.horizontalGradient(listOf(Color.Black.copy(alpha = a), Color.Transparent), startX = edge, endX = edge + w),
+                        Offset(edge, topPx), Size(w, ph),
+                    )
+                }
             },
         contentAlignment = Alignment.TopCenter,
     ) {
