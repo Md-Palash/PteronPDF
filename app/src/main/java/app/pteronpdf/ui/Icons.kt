@@ -154,8 +154,8 @@ fun ImageToPdfGlyph(tint: Color, modifier: Modifier = Modifier, scale: Float = 1
         modifier, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
         horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy((0.5f * scale).dp),
     ) {
-        PIconView(PIcon.Image, tint, Modifier.size((27f * scale).dp))
-        PIconView(PIcon.ArrowRight, tint, Modifier.size((14f * scale).dp))
-        PIconView(PIcon.Pdf, tint, Modifier.size((27f * scale).dp))
+        PIconView(PIcon.Image, tint, Modifier.size((23f * scale).dp))
+        PIconView(PIcon.ArrowRight, tint, Modifier.size((13f * scale).dp))
+        PIconView(PIcon.Pdf, tint, Modifier.size((23f * scale).dp))
     }
 }
