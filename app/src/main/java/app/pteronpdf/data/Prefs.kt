@@ -83,13 +83,6 @@ class Prefs(context: Context) {
             "${it.uri}\t${it.name.replace('\t', ' ').replace('\n', ' ')}\t${it.lastPage}\t${it.pages}\t${it.time}"
         }).apply()
     }
-
-    fun forgetRecent(uri: Uri) {
-        val list = recents().filter { it.uri != uri }
-        sp.edit().putString("recents", list.joinToString("\n") {
-            "${it.uri}\t${it.name}\t${it.lastPage}\t${it.pages}\t${it.time}"
-        }).apply()
-    }
 }
 
 /** Observable view of the settings: UI reads these, writes go through to [Prefs]. */
