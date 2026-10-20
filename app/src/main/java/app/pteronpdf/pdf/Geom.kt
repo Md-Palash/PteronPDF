@@ -3,7 +3,6 @@ package app.pteronpdf.pdf
 import android.graphics.PointF
 import android.graphics.RectF
 import kotlin.math.PI
-import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.hypot
@@ -160,5 +159,4 @@ object Geom {
         return RectF(at.x, at.y, at.x + w, at.y + h)
     }
 
-    @Suppress("unused") fun near(a: Float, b: Float, eps: Float = 1e-3f) = abs(a - b) < eps
 }
