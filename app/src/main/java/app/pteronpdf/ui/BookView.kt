@@ -2,6 +2,7 @@ package app.pteronpdf.ui
 
 import android.graphics.Bitmap
 import android.graphics.PointF
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.animateFloatAsState
@@ -12,9 +13,15 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.shadow
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -77,6 +84,8 @@ private const val ROWS = 6         // ...and this many down it
 private const val LEAD = 0.6f      // how far the free edge runs ahead of the spine while turning
 private const val PULL = 0.34f     // extra lead on the side the finger started from, so the page sweeps diagonally
 private const val SHOT_MAX_W = 1100
+private val SoftInOut = CubicBezierEasing(0.45f, 0.05f, 0.25f, 1f)     // gentle start, long soft landing
+private val SoftLanding = CubicBezierEasing(0.2f, 0.35f, 0.2f, 1f)     // already moving at the start
 
 /** Pictures of pages (the PDF image with its marks drawn on) that a turn bends. Few are kept; both threads use it. */
 private class Shots {
@@ -140,11 +149,13 @@ fun BookView(
         val dir = if (target > 0.5f) 1 else if (target < -0.5f) -1 else 0
         running[0] = dir
         settleJob[0] = scope.launch {
-            // unhurried and eased at both ends, so the page can be watched as it goes
-            val ms = (700f + 600f * abs(target - state.t)).toInt()
+            // unhurried and eased so the page glides: a tap eases in and out; a release from a drag carries on at once
+            // (no pause under the finger) and settles softly
+            val fromRest = abs(state.t) < 0.02f
+            val ms = ((if (fromRest) 950f else 800f) + 450f * abs(target - state.t)).toInt()
             animate(
-                state.t, target, initialVelocity = if (viewW > 0) (-velocity / viewW).coerceIn(-2.5f, 2.5f) else 0f,
-                animationSpec = tween(ms, easing = FastOutSlowInEasing),
+                state.t, target,
+                animationSpec = tween(ms, easing = if (fromRest) SoftInOut else SoftLanding),
             ) { v, _ -> state.t = v.coerceIn(-1f, 1f) }
             commit(dir)
             running[0] = 0
@@ -171,7 +182,8 @@ fun BookView(
 
     val gutter = with(density) { 12.dp.toPx() }
     val topPx = with(density) { topPad.toPx() }
-    val availH = (viewH - topPx - gutter * 1.5f).coerceAtLeast(1f)
+    val buttonsH = with(density) { 64.dp.toPx() }               // the turn buttons sit under the page, never over it
+    val availH = (viewH - topPx - gutter * 1.5f - buttonsH).coerceAtLeast(1f)
     // while the editing card is up, the whole page shrinks (on the GPU, no re-layout) so its bottom stays reachable above the card
     val panelPx = with(density) { panelHeight.toPx() }
     val editScale = if (viewH == 0) 1f else ((viewH - topPx - panelPx - gutter) / availH).coerceIn(0.4f, 1f)
@@ -228,6 +240,15 @@ fun BookView(
             if (dir > 0 && state.current < last) Leaf(NEXT, state.current + 1, state, vm, engine, shots, viewW, availH, gutter, topPx, onText, onEditText)
             Leaf(CURRENT, state.current, state, vm, engine, shots, viewW, availH, gutter, topPx, onText, onEditText)
             if (dir < 0 && state.current > 0) Leaf(PREV, state.current - 1, state, vm, engine, shots, viewW, availH, gutter, topPx, onText, onEditText)
+            val shown by animateFloatAsState(if (editing) 0f else 1f, tween(220), label = "turnButtons")
+            if (shown > 0.01f) Row(
+                Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 12.dp)
+                    .graphicsLayer { alpha = shown; translationY = (1f - shown) * 24f }
+                    .shadow(6.dp, RoundedCornerShape(26.dp)).background(c.bar, RoundedCornerShape(26.dp)).padding(5.dp),
+            ) {
+                TurnButton(PIcon.Back, "Previous page", state.current > 0, c.onBar) { turnBy(-1) }
+                TurnButton(PIcon.Chevron, "Next page", state.current < last, c.onBar) { turnBy(1) }
+            }
         }
     }
 }
@@ -374,4 +395,13 @@ private fun Leaf(
             PageItem(vm, engine, index, pw, viewW, onText, onEditText, trackRoot = kind == CURRENT)
         }
     }
+}
+
+@Composable
+private fun TurnButton(icon: PIcon, desc: String, enabled: Boolean, tint: Color, onClick: () -> Unit) {
+    Box(
+        Modifier.size(46.dp).alpha(if (enabled) 1f else 0.3f)
+            .pressable(CircleShape, enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) { PIconView(icon, tint, Modifier.size(24.dp), desc) }
 }
