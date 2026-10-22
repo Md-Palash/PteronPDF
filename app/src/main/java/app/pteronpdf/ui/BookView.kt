@@ -20,7 +20,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.nativeCanvas
@@ -38,8 +37,10 @@ import app.pteronpdf.pdf.Item
 import app.pteronpdf.pdf.PdfEngine
 import app.pteronpdf.pdf.ReaderViewModel
 import app.pteronpdf.theme.LocalPteron
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
@@ -87,8 +88,8 @@ fun BookView(
     fun settle(target: Float, velocity: Float = 0f) {
         settleJob[0]?.cancel()
         settleJob[0] = scope.launch {
-            // unhurried: a full turn takes about 0.9 s and eases in and out, so the page can be watched as it goes
-            val ms = (480f + 420f * abs(target - state.t)).toInt()
+            // unhurried: a full turn takes about 1.2 s and eases in and out, so the page can be watched as it goes
+            val ms = (640f + 560f * abs(target - state.t)).toInt()
             animate(
                 state.t, target, initialVelocity = if (viewW > 0) (-velocity / viewW).coerceIn(-2.5f, 2.5f) else 0f,
                 animationSpec = tween(ms, easing = FastOutSlowInEasing),
@@ -214,13 +215,16 @@ private fun Leaf(
     val turning by remember(kind) {
         derivedStateOf { (kind == CURRENT && state.t > 0f) || (kind == PREV && state.t < 0f) }
     }
-    // the page's picture, taken once when the turn starts
-    var tex by remember { mutableStateOf<ImageBitmap?>(null) }
-    val recorded = remember { BooleanArray(1) }
-    LaunchedEffect(turning) {
+    // the page's picture, taken once when the turn starts (as an ordinary bitmap: a mesh cannot be drawn from a GPU-only one)
+    var tex by remember(index) { mutableStateOf<android.graphics.Bitmap?>(null) }
+    val recorded = remember(index) { BooleanArray(1) }
+    LaunchedEffect(turning, index) {
         if (turning) {
             while (!recorded[0]) withFrameNanos { }
-            tex = runCatching { layer.toImageBitmap() }.getOrNull()
+            tex = runCatching {
+                val hw = layer.toImageBitmap().asAndroidBitmap()
+                withContext(Dispatchers.Default) { hw.copy(android.graphics.Bitmap.Config.ARGB_8888, false) }
+            }.getOrNull()
         } else { tex = null; recorded[0] = false }
     }
 
@@ -315,7 +319,7 @@ private fun Leaf(
                     drawIntoCanvas { cv ->
                         val n = cv.nativeCanvas
                         n.drawBitmapMesh(paperBitmap, COLS, ROWS, verts, 0, paperColors, 0, meshPaint)
-                        n.drawBitmapMesh(bmp.asAndroidBitmap(), COLS, ROWS, verts, 0, frontColors, 0, meshPaint)
+                        n.drawBitmapMesh(bmp, COLS, ROWS, verts, 0, frontColors, 0, meshPaint)
                     }
                 },
         ) {
