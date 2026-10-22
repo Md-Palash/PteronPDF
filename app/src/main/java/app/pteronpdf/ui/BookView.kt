@@ -81,6 +81,10 @@ fun BookView(
     var viewH by remember { mutableIntStateOf(0) }
     val last = engine.pageCount - 1
     val settleJob = remember { arrayOfNulls<Job>(1) }
+    // pictures of pages already captured for turning, so flipping back and forth quickly does not capture them again
+    val shots = remember { LinkedHashMap<Int, android.graphics.Bitmap>() }
+    LaunchedEffect(viewW, viewH, editing) { shots.clear() }
+    LaunchedEffect(vm) { snapshotFlow { vm.items.toList() }.collect { shots.clear() } }
 
     LaunchedEffect(last) { if (state.current > last) state.jump(last.coerceAtLeast(0)) }
     LaunchedEffect(state.current) { vm.currentPage = state.current; vm.select(null) }
@@ -157,9 +161,9 @@ fun BookView(
     ) {
         if (viewW > 0 && viewH > 0) {
             // drawing order is the stacking order: whatever is turning must be drawn last, over the page beneath it
-            if (dir > 0 && state.current < last) Leaf(NEXT, state.current + 1, state, vm, engine, viewW, viewH, availH, gutter, topPx, onText, onEditText)
-            Leaf(CURRENT, state.current, state, vm, engine, viewW, viewH, availH, gutter, topPx, onText, onEditText)
-            if (dir < 0 && state.current > 0) Leaf(PREV, state.current - 1, state, vm, engine, viewW, viewH, availH, gutter, topPx, onText, onEditText)
+            if (dir > 0 && state.current < last) Leaf(NEXT, state.current + 1, state, vm, engine, viewW, viewH, availH, gutter, topPx, onText, onEditText, shots)
+            Leaf(CURRENT, state.current, state, vm, engine, viewW, viewH, availH, gutter, topPx, onText, onEditText, shots)
+            if (dir < 0 && state.current > 0) Leaf(PREV, state.current - 1, state, vm, engine, viewW, viewH, availH, gutter, topPx, onText, onEditText, shots)
         }
     }
 }
@@ -205,7 +209,7 @@ private fun sheetProfile(p: Float, len: Float, xs: FloatArray, zs: FloatArray, p
 private fun Leaf(
     kind: Int, index: Int, state: BookState, vm: ReaderViewModel, engine: PdfEngine,
     viewW: Int, viewH: Int, availH: Float, gutter: Float, topPx: Float,
-    onText: (Int, PointF) -> Unit, onEditText: (Item) -> Unit,
+    onText: (Int, PointF) -> Unit, onEditText: (Item) -> Unit, shots: LinkedHashMap<Int, android.graphics.Bitmap>,
 ) {
     val info = engine.pages[index]
     val pw = pageWidth(viewW, availH, gutter, info.aspect)
@@ -216,15 +220,22 @@ private fun Leaf(
         derivedStateOf { (kind == CURRENT && state.t > 0f) || (kind == PREV && state.t < 0f) }
     }
     // the page's picture, taken once when the turn starts (as an ordinary bitmap: a mesh cannot be drawn from a GPU-only one)
-    var tex by remember(index) { mutableStateOf<android.graphics.Bitmap?>(null) }
+    var tex by remember(index) { mutableStateOf<android.graphics.Bitmap?>(shots[index]) }
     val recorded = remember(index) { BooleanArray(1) }
     LaunchedEffect(turning, index) {
         if (turning) {
+            val cached = shots[index]
+            if (cached != null) { tex = cached; return@LaunchedEffect }
             while (!recorded[0]) withFrameNanos { }
-            tex = runCatching {
+            val shot = runCatching {
                 val hw = layer.toImageBitmap().asAndroidBitmap()
                 withContext(Dispatchers.Default) { hw.copy(android.graphics.Bitmap.Config.ARGB_8888, false) }
             }.getOrNull()
+            if (shot != null) {
+                shots[index] = shot
+                while (shots.size > 4) shots.remove(shots.keys.first())
+            }
+            tex = shot
         } else { tex = null; recorded[0] = false }
     }
 
@@ -289,11 +300,11 @@ private fun Leaf(
                             val sn = sin(phi)
                             val c = (255f * (1f - (0.04f + 0.18f * sn * sn))).toInt()
                             val rgb = (c shl 16) or (c shl 8) or c
-                            // the picture shows on the face, and fades out as the sheet goes past upright (the paper's back shows)
-                            val face = ((1.75f - phi) / 0.30f).coerceIn(0f, 1f)
-                            val alpha = (255f * (0.14f + 0.86f * face * face * (3f - 2f * face))).toInt()
+                            // the picture stays on both sides (the back shows it mirrored, paler), so the page never goes blank
+                            val back = ((phi - 1.35f) / 0.5f).coerceIn(0f, 1f)
+                            val alpha = 255
                             frontColors[k] = (alpha shl 24) or rgb
-                            paperColors[k] = (0xFF shl 24) or rgb
+                            paperColors[k] = ((255f * 0.5f * back * back * (3f - 2f * back)).toInt() shl 24) or rgb
                         }
                         if (i == 0) reachTop = rowMax
                         if (i == ROWS / 2) reachMid = rowMax
@@ -318,8 +329,8 @@ private fun Leaf(
                     }
                     drawIntoCanvas { cv ->
                         val n = cv.nativeCanvas
-                        n.drawBitmapMesh(paperBitmap, COLS, ROWS, verts, 0, paperColors, 0, meshPaint)
                         n.drawBitmapMesh(bmp, COLS, ROWS, verts, 0, frontColors, 0, meshPaint)
+                        n.drawBitmapMesh(paperBitmap, COLS, ROWS, verts, 0, paperColors, 0, meshPaint)
                     }
                 },
         ) {
