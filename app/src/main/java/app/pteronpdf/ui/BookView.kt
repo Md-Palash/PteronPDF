@@ -1,5 +1,6 @@
 package app.pteronpdf.ui
 
+import android.graphics.Bitmap
 import android.graphics.PointF
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animate
@@ -19,19 +20,27 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.asAndroidBitmap
-import androidx.compose.ui.graphics.nativeCanvas
-import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.Canvas
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.CanvasDrawScope
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.rememberGraphicsLayer
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import app.pteronpdf.pdf.Item
 import app.pteronpdf.pdf.PdfEngine
@@ -39,6 +48,7 @@ import app.pteronpdf.pdf.ReaderViewModel
 import app.pteronpdf.theme.LocalPteron
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.PI
@@ -62,11 +72,43 @@ private const val CURRENT = 0
 private const val NEXT = 1
 private const val PREV = 2
 
+private const val COLS = 36        // the turning sheet is a smooth grid: this many cells along the page...
+private const val ROWS = 6         // ...and this many down it
+private const val LEAD = 0.6f      // how far the free edge runs ahead of the spine while turning
+private const val PULL = 0.34f     // extra lead on the side the finger started from, so the page sweeps diagonally
+private const val SHOT_MAX_W = 1100
+
+/** Pictures of pages (the PDF image with its marks drawn on) that a turn bends. Few are kept; both threads use it. */
+private class Shots {
+    private val map = LinkedHashMap<String, Bitmap>(8, 0.75f, true)
+    @Synchronized fun get(k: String): Bitmap? = map[k]
+    @Synchronized fun put(k: String, b: Bitmap) {
+        map[k] = b
+        while (map.size > 5) { val it = map.keys.iterator(); it.next(); it.remove() }
+    }
+}
+
+private fun shotKey(vm: ReaderViewModel, index: Int, items: List<Item>) =
+    "$index:${vm.pageVersion(index)}:${items.filter { it.page == index }.hashCode()}"
+
+/** Paints one page's picture: the rendered PDF with the session's marks on top. Same drawing the live page uses. */
+private fun paintShot(vm: ReaderViewModel, engine: PdfEngine, index: Int, items: List<Item>, texW: Int, renderW: Int): Pair<Bitmap, Boolean> {
+    val info = engine.pages[index]
+    val texH = (texW * info.aspect).toInt().coerceAtLeast(1)
+    val img = ImageBitmap(texW, texH)
+    val src = vm.cached(index, renderW)
+    CanvasDrawScope().draw(Density(1f), LayoutDirection.Ltr, Canvas(img), Size(texW.toFloat(), texH.toFloat())) {
+        drawRect(Color.White)
+        if (src != null) drawImage(src.asImageBitmap(), dstSize = IntSize(texW, texH), filterQuality = FilterQuality.Medium)
+        val s = texW / info.width
+        for (it in items) if (it.page == index) drawMarkup(it.m, s)
+    }
+    return img.asAndroidBitmap() to (src != null)
+}
+
 /**
- * Book mode: one whole page at a time, turned by swiping left or right (or tapping the page edges).
- * The turning page hinges on its left edge like a leaf of a book, lifting toward you and darkening a little, while the
- * page beneath stays still. Everything about the turn is drawn in graphics layers that read [BookState.t] at draw time,
- * so a turn costs no recomposition.
+ * Book mode: one whole page at a time, turned by swiping or tapping the page edges. The page that turns is bent over a
+ * smooth curved sheet; everything about the turn is drawn from [BookState.t] at draw time, so a turn costs no recomposition.
  */
 @Composable
 fun BookView(
@@ -81,27 +123,41 @@ fun BookView(
     var viewH by remember { mutableIntStateOf(0) }
     val last = engine.pageCount - 1
     val settleJob = remember { arrayOfNulls<Job>(1) }
-    // pictures of pages already captured for turning, so flipping back and forth quickly does not capture them again
-    val shots = remember { LinkedHashMap<Int, android.graphics.Bitmap>() }
-    LaunchedEffect(viewW, viewH, editing) { shots.clear() }
-    LaunchedEffect(vm) { snapshotFlow { vm.items.toList() }.collect { shots.clear() } }
+    val running = remember { IntArray(1) }          // direction of the turn in flight: 1, -1, or 0
+    val shots = remember { Shots() }
 
     LaunchedEffect(last) { if (state.current > last) state.jump(last.coerceAtLeast(0)) }
     LaunchedEffect(state.current) { vm.currentPage = state.current; vm.select(null) }
 
+    fun commit(dir: Int) {
+        if (dir > 0) state.current = (state.current + 1).coerceAtMost(last)
+        else if (dir < 0) state.current = (state.current - 1).coerceAtLeast(0)
+        state.t = 0f
+    }
+
     fun settle(target: Float, velocity: Float = 0f) {
         settleJob[0]?.cancel()
+        val dir = if (target > 0.5f) 1 else if (target < -0.5f) -1 else 0
+        running[0] = dir
         settleJob[0] = scope.launch {
-            // unhurried: a full turn takes about 1.2 s and eases in and out, so the page can be watched as it goes
-            val ms = (640f + 560f * abs(target - state.t)).toInt()
+            // unhurried and eased at both ends, so the page can be watched as it goes
+            val ms = (700f + 600f * abs(target - state.t)).toInt()
             animate(
                 state.t, target, initialVelocity = if (viewW > 0) (-velocity / viewW).coerceIn(-2.5f, 2.5f) else 0f,
                 animationSpec = tween(ms, easing = FastOutSlowInEasing),
             ) { v, _ -> state.t = v.coerceIn(-1f, 1f) }
-            if (target > 0.5f) state.current = (state.current + 1).coerceAtMost(last)
-            else if (target < -0.5f) state.current = (state.current - 1).coerceAtLeast(0)
-            state.t = 0f
+            commit(dir)
+            running[0] = 0
         }
+    }
+
+    /** A tap on a page edge. Tapping again while a page is still turning lands that page at once and turns the next. */
+    fun turnBy(dir: Int) {
+        if (settleJob[0]?.isActive == true && running[0] != 0) {
+            settleJob[0]?.cancel(); commit(running[0]); running[0] = 0
+        }
+        val to = state.current + dir
+        if (to in 0..last) settle(dir.toFloat())
     }
 
     val drag = rememberDraggableState { dx ->
@@ -121,14 +177,22 @@ fun BookView(
     val editScale = if (viewH == 0) 1f else ((viewH - topPx - panelPx - gutter) / availH).coerceIn(0.4f, 1f)
     val scale by animateFloatAsState(if (editing) editScale else 1f, tween(260, easing = FastOutSlowInEasing), label = "bookFit")
 
-    // pictures of the neighbouring pages are made ahead of time, so a turn never reveals a blank page
+    // The pages around the current one are rendered and their turn pictures painted ahead of time (off the main thread),
+    // and repainted when the marks change, so a turn can begin at once, even when pages are turned in quick succession.
     LaunchedEffect(state.current, viewW, viewH) {
         if (viewW == 0) return@LaunchedEffect
-        for (n in intArrayOf(state.current + 1, state.current - 1)) {
-            if (n < 0 || n > last) continue
-            val a = engine.pages[n].aspect
-            val pw = pageWidth(viewW, availH, gutter, a)
-            vm.render(n, renderWidthFor(vm, pw, viewW))
+        snapshotFlow { vm.items.toList() }.collectLatest { items ->
+            for (n in intArrayOf(state.current, state.current + 1, state.current - 1)) {
+                if (n < 0 || n > last) continue
+                val pw = pageWidth(viewW, availH, gutter, engine.pages[n].aspect)
+                val rw = renderWidthFor(vm, pw, viewW)
+                vm.render(n, rw)
+                val key = shotKey(vm, n, items)
+                if (shots.get(key) == null) {
+                    val (bmp, ready) = withContext(Dispatchers.Default) { paintShot(vm, engine, n, items, rw.coerceAtMost(SHOT_MAX_W), rw) }
+                    if (ready) shots.put(key, bmp)
+                }
+            }
         }
     }
 
@@ -151,8 +215,8 @@ fun BookView(
             .pointerInput(last) {
                 detectTapGestures(onTap = { o ->
                     when {
-                        o.x < size.width * 0.16f && state.current > 0 -> settle(-1f)
-                        o.x > size.width * 0.84f && state.current < last -> settle(1f)
+                        o.x < size.width * 0.16f -> turnBy(-1)
+                        o.x > size.width * 0.84f -> turnBy(1)
                         else -> onTapEmpty()
                     }
                 })
@@ -161,9 +225,9 @@ fun BookView(
     ) {
         if (viewW > 0 && viewH > 0) {
             // drawing order is the stacking order: whatever is turning must be drawn last, over the page beneath it
-            if (dir > 0 && state.current < last) Leaf(NEXT, state.current + 1, state, vm, engine, viewW, viewH, availH, gutter, topPx, onText, onEditText, shots)
-            Leaf(CURRENT, state.current, state, vm, engine, viewW, viewH, availH, gutter, topPx, onText, onEditText, shots)
-            if (dir < 0 && state.current > 0) Leaf(PREV, state.current - 1, state, vm, engine, viewW, viewH, availH, gutter, topPx, onText, onEditText, shots)
+            if (dir > 0 && state.current < last) Leaf(NEXT, state.current + 1, state, vm, engine, shots, viewW, availH, gutter, topPx, onText, onEditText)
+            Leaf(CURRENT, state.current, state, vm, engine, shots, viewW, availH, gutter, topPx, onText, onEditText)
+            if (dir < 0 && state.current > 0) Leaf(PREV, state.current - 1, state, vm, engine, shots, viewW, availH, gutter, topPx, onText, onEditText)
         }
     }
 }
@@ -173,12 +237,6 @@ private fun pageWidth(viewW: Int, availH: Float, gutter: Float, aspect: Float): 
     if (w * aspect > availH) w = availH / aspect
     return w.toInt().coerceAtLeast(1)
 }
-
-private const val COLS = 36        // the turning sheet is a smooth grid: this many cells along the page...
-private const val ROWS = 6         // ...and this many down it
-private const val LEAD = 0.6f      // how far the free edge runs ahead of the spine while turning
-private const val PULL = 0.34f     // extra lead on the side the finger started from, so the page sweeps diagonally
-private const val PAPER = 0xFFF7F3EB.toInt()
 
 /**
  * The sheet's curve at turn progress [p] (0 flat, 1 turned over): how far along the page each sample has moved ([xs]),
@@ -199,55 +257,43 @@ private fun sheetProfile(p: Float, len: Float, xs: FloatArray, zs: FloatArray, p
 }
 
 /**
- * One page of the book. The page lying still is drawn normally. When a turn begins, the page is captured as a picture, and
- * while it turns that picture is stretched over one smooth curved sheet (a grid of points that follow the bend), so the page
- * stays whole and bends continuously. The sheet hinges at the spine, its free edge leads, and the corner nearest the finger
- * sweeps furthest. Each point is lit by how it faces; past upright the back of the paper shows through, and the lifted sheet
- * throws a soft shadow on the page beneath.
+ * One page of the book, centred in the space below the top bar. Lying still it is the live page. Turning, its ready-made
+ * picture is stretched over a curved sheet that hinges at the spine, with its free edge leading and the corner nearest the
+ * finger sweeping furthest. Each point is lit by how it faces, the back of the sheet shows the page paler and mirrored,
+ * and the lifted sheet throws a soft shadow on the page beneath.
  */
 @Composable
 private fun Leaf(
-    kind: Int, index: Int, state: BookState, vm: ReaderViewModel, engine: PdfEngine,
-    viewW: Int, viewH: Int, availH: Float, gutter: Float, topPx: Float,
-    onText: (Int, PointF) -> Unit, onEditText: (Item) -> Unit, shots: LinkedHashMap<Int, android.graphics.Bitmap>,
+    kind: Int, index: Int, state: BookState, vm: ReaderViewModel, engine: PdfEngine, shots: Shots,
+    viewW: Int, availH: Float, gutter: Float, topPx: Float,
+    onText: (Int, PointF) -> Unit, onEditText: (Item) -> Unit,
 ) {
     val info = engine.pages[index]
     val pw = pageWidth(viewW, availH, gutter, info.aspect)
     val ph = pw * info.aspect
     val density = LocalDensity.current
-    val layer = rememberGraphicsLayer()
+    val top = topPx + gutter * 0.75f + (availH - ph) / 2f          // centred, both ways
     val turning by remember(kind) {
         derivedStateOf { (kind == CURRENT && state.t > 0f) || (kind == PREV && state.t < 0f) }
     }
-    // the page's picture, taken once when the turn starts (as an ordinary bitmap: a mesh cannot be drawn from a GPU-only one)
-    var tex by remember(index) { mutableStateOf<android.graphics.Bitmap?>(shots[index]) }
-    val recorded = remember(index) { BooleanArray(1) }
-    LaunchedEffect(turning, index) {
-        if (turning) {
-            val cached = shots[index]
-            if (cached != null) { tex = cached; return@LaunchedEffect }
-            while (!recorded[0]) withFrameNanos { }
-            val shot = runCatching {
-                val hw = layer.toImageBitmap().asAndroidBitmap()
-                withContext(Dispatchers.Default) { hw.copy(android.graphics.Bitmap.Config.ARGB_8888, false) }
-            }.getOrNull()
-            if (shot != null) {
-                shots[index] = shot
-                while (shots.size > 4) shots.remove(shots.keys.first())
-            }
-            tex = shot
-        } else { tex = null; recorded[0] = false }
+    // the picture to bend: normally ready already; if not, painted right here (a few milliseconds), never waited for
+    val shot: Bitmap? = if (!turning) null else {
+        val items = vm.items.toList()
+        val key = shotKey(vm, index, items)
+        remember(key) {
+            shots.get(key) ?: paintShot(vm, engine, index, items, renderWidthFor(vm, pw, viewW).coerceAtMost(SHOT_MAX_W), renderWidthFor(vm, pw, viewW)).first.also { shots.put(key, it) }
+        }
     }
 
     // buffers and objects reused every frame, so a turn allocates nothing
     val verts = remember { FloatArray((COLS + 1) * (ROWS + 1) * 2) }
-    val frontColors = remember { IntArray((COLS + 1) * (ROWS + 1)) }
-    val paperColors = remember { IntArray((COLS + 1) * (ROWS + 1)) }
+    val lit = remember { IntArray((COLS + 1) * (ROWS + 1)) }
+    val tint = remember { IntArray((COLS + 1) * (ROWS + 1)) }
     val xs = remember { FloatArray(COLS + 1) }
     val zs = remember { FloatArray(COLS + 1) }
     val phis = remember { FloatArray(COLS) }
     val shadow = remember { Path() }
-    val paperBitmap = remember { android.graphics.Bitmap.createBitmap(2, 2, android.graphics.Bitmap.Config.ARGB_8888).apply { eraseColor(PAPER) } }
+    val paper = remember { Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888).apply { eraseColor(0xFFF7F3EB.toInt()) } }
     val meshPaint = remember { android.graphics.Paint().apply { isFilterBitmap = true; isAntiAlias = true } }
 
     Box(
@@ -259,25 +305,17 @@ private fun Leaf(
         contentAlignment = Alignment.TopCenter,
     ) {
         Box(
-            Modifier.padding(top = with(density) { topPx.toDp() })
+            Modifier.padding(top = with(density) { top.toDp() })
                 .size(with(density) { pw.toDp() }, with(density) { ph.toDp() })
                 .drawWithContent {
                     val t = state.t
-                    if (!turning) {
+                    if (!turning || shot == null) {
                         drawContent()
                         // the page underneath is a little dim while covered and brightens as it is uncovered
                         if (kind == NEXT && t > 0f) {
                             val a = (1f - t) * 0.14f
                             if (a > 0.003f) drawRect(Color.Black.copy(alpha = a), Offset.Zero, size)
                         }
-                        return@drawWithContent
-                    }
-                    val bmp = tex
-                    if (bmp == null) {
-                        // the first moments of a turn: take the page's picture, and keep showing the page as it is
-                        layer.record(this, layoutDirection, androidx.compose.ui.unit.IntSize(size.width.toInt(), size.height.toInt())) { this@drawWithContent.drawContent() }
-                        recorded[0] = true
-                        drawContent()
                         return@drawWithContent
                     }
                     val w = size.width; val h = size.height
@@ -299,12 +337,11 @@ private fun Leaf(
                             val phi = if (j == 0) phis[0] else if (j == COLS) phis[COLS - 1] else (phis[j - 1] + phis[j]) / 2f
                             val sn = sin(phi)
                             val c = (255f * (1f - (0.04f + 0.18f * sn * sn))).toInt()
-                            val rgb = (c shl 16) or (c shl 8) or c
-                            // the picture stays on both sides (the back shows it mirrored, paler), so the page never goes blank
+                            val rgb = (0xFF shl 24) or (c shl 16) or (c shl 8) or c
+                            lit[k] = rgb
+                            // past upright the back of the sheet shows: the page, mirrored, under a veil of paper
                             val back = ((phi - 1.35f) / 0.5f).coerceIn(0f, 1f)
-                            val alpha = 255
-                            frontColors[k] = (alpha shl 24) or rgb
-                            paperColors[k] = ((255f * 0.5f * back * back * (3f - 2f * back)).toInt() shl 24) or rgb
+                            tint[k] = ((255f * 0.5f * back * back * (3f - 2f * back)).toInt() shl 24) or (rgb and 0xFFFFFF)
                         }
                         if (i == 0) reachTop = rowMax
                         if (i == ROWS / 2) reachMid = rowMax
@@ -329,8 +366,8 @@ private fun Leaf(
                     }
                     drawIntoCanvas { cv ->
                         val n = cv.nativeCanvas
-                        n.drawBitmapMesh(bmp, COLS, ROWS, verts, 0, frontColors, 0, meshPaint)
-                        n.drawBitmapMesh(paperBitmap, COLS, ROWS, verts, 0, paperColors, 0, meshPaint)
+                        n.drawBitmapMesh(shot, COLS, ROWS, verts, 0, lit, 0, meshPaint)
+                        n.drawBitmapMesh(paper, COLS, ROWS, verts, 0, tint, 0, meshPaint)
                     }
                 },
         ) {
