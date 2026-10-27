@@ -28,6 +28,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
@@ -201,11 +202,7 @@ fun ReaderScreen(vm: ReaderViewModel, settings: AppSettings, onClose: () -> Unit
                                 maxLines = 1, overflow = TextOverflow.Ellipsis,
                             )
                             if (vm.dirty) Box(Modifier.padding(horizontal = 4.dp).size(7.dp).clip(CircleShape).background(c.accent))
-                            if (engine != null) Text(
-                                "${vm.currentPage + 1}/${engine.pageCount}",
-                                fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = c.onBar,
-                                modifier = Modifier.padding(horizontal = 4.dp),
-                            )
+                            if (engine != null) PageField(vm.currentPage, engine.pageCount, c.onBar, c.accent, c.chip) { goToPage(it) }
                             BarIconButton(
                                 PIcon.Trash, "Delete this page", { deleteIndex = vm.currentPage },
                                 enabled = engine != null && engine.pageCount > 1,
@@ -603,4 +600,36 @@ private fun TextDialog(title: String, initial: String, onDismiss: () -> Unit, on
         confirmButton = { TextButton({ onConfirm(text) }) { Text(if (initial.isEmpty()) "Add" else "Save") } },
         dismissButton = { TextButton(onDismiss) { Text("Cancel") } },
     )
+}
+
+/** The page counter: the current page is a field you can type into (then Done) to jump there; the total stays fixed. */
+@Composable
+private fun PageField(current: Int, total: Int, color: Color, accent: Color, chip: Color, onGo: (Int) -> Unit) {
+    var text by remember { mutableStateOf("") }
+    var focused by remember { mutableStateOf(false) }
+    val focus = androidx.compose.ui.platform.LocalFocusManager.current
+    val digits = total.toString().length
+    fun go() {
+        text.toIntOrNull()?.let { onGo((it - 1).coerceIn(0, total - 1)) }
+        focus.clearFocus()
+    }
+    Row(Modifier.padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            Modifier.width((10 * digits + 16).dp).clip(RoundedCornerShape(8.dp))
+                .background(if (focused) accent.copy(alpha = 0.22f) else chip).padding(vertical = 3.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            BasicTextField(
+                if (focused) text else "${current + 1}",
+                { v -> text = v.filter { it.isDigit() }.take(digits) },
+                Modifier.fillMaxWidth().onFocusChanged { f -> focused = f.isFocused; if (f.isFocused) text = "" },
+                singleLine = true,
+                textStyle = TextStyle(color = color, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, textAlign = androidx.compose.ui.text.style.TextAlign.Center),
+                cursorBrush = SolidColor(accent),
+                keyboardOptions = KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number, imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { go() }),
+            )
+        }
+        Text("/$total", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = color, modifier = Modifier.padding(start = 3.dp))
+    }
 }
