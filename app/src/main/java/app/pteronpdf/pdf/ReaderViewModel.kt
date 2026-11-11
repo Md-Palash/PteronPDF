@@ -47,7 +47,6 @@ class ReaderViewModel(app: Application, val uri: Uri) : AndroidViewModel(app) {
     var name by mutableStateOf("PDF"); private set
     var message by mutableStateOf<String?>(null)
     var needsSaveAs by mutableStateOf(false)
-    var initialPage = 0; private set
 
     /** Bumps on every change; [dirty] compares it to the value at the last save. */
     private var editCount by mutableIntStateOf(0)
@@ -148,7 +147,7 @@ class ReaderViewModel(app: Application, val uri: Uri) : AndroidViewModel(app) {
             val e = PdfEngine.open(getApplication(), uri)
             if (released) { e.close(); return }      // closed again before it finished opening
             engine = e
-            initialPage = if (prefs.rememberPosition)
+            val initialPage = if (prefs.rememberPosition)
                 prefs.recents().firstOrNull { it.uri == uri }?.lastPage?.coerceIn(0, e.pageCount - 1) ?: 0
             else 0
             currentPage = initialPage
@@ -400,6 +399,24 @@ class ReaderViewModel(app: Application, val uri: Uri) : AndroidViewModel(app) {
     }
 
     private var released = false
+
+    /** This reader is no longer the one on screen (another PDF tab was chosen): drop its page images, keep its document and marks. */
+    fun park() {
+        if (released) return
+        tool = Tool.None; selectedId = null; preview = null; ghost = null
+        cache.evictAll()
+        touchRecent()
+    }
+
+    /** Writes the marks into the file and then calls [done] (also when it fails), without re-opening the document: used when closing. */
+    fun saveThen(done: (ok: Boolean) -> Unit) {
+        val e = engine
+        if (e == null) { done(true); return }
+        viewModelScope.launch {
+            val ok = try { e.saveWith(uri, items.toList()); true } catch (t: Throwable) { needsSaveAs = true; false }
+            done(ok)
+        }
+    }
 
     /** Frees the document and every cached page image. Called when the reader leaves the screen, and again (harmlessly) on clear. */
     fun release() {
