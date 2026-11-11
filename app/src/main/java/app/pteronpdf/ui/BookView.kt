@@ -182,7 +182,9 @@ fun BookView(
 
     val gutter = with(density) { 12.dp.toPx() }
     val topPx = with(density) { topPad.toPx() }
-    val buttonsH = with(density) { 64.dp.toPx() }               // the turn buttons sit under the page, never over it
+    val landscape = viewW > viewH
+    // portrait: the turn buttons sit under the page, never over it. Landscape: they sit at the sides, so the page keeps the full height
+    val buttonsH = if (landscape) 0f else with(density) { 64.dp.toPx() }
     val availH = (viewH - topPx - gutter * 1.5f - buttonsH).coerceAtLeast(1f)
     // while the editing card is up, the whole page shrinks (on the GPU, no re-layout) so its bottom stays reachable above the card
     val panelPx = with(density) { panelHeight.toPx() }
@@ -241,13 +243,27 @@ fun BookView(
             Leaf(CURRENT, state.current, state, vm, engine, shots, viewW, availH, gutter, topPx, onText, onEditText)
             if (dir < 0 && state.current > 0) Leaf(PREV, state.current - 1, state, vm, engine, shots, viewW, availH, gutter, topPx, onText, onEditText)
             val shown by animateFloatAsState(if (editing) 0f else 1f, tween(220), label = "turnButtons")
-            if (shown > 0.01f) Row(
-                Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 12.dp)
-                    .graphicsLayer { alpha = shown; translationY = (1f - shown) * 24f }
-                    .shadow(6.dp, RoundedCornerShape(26.dp)).background(c.bar, RoundedCornerShape(26.dp)).padding(5.dp),
-            ) {
-                TurnButton(PIcon.Back, "Previous page", state.current > 0, c.onBar) { turnBy(-1) }
-                TurnButton(PIcon.Chevron, "Next page", state.current < last, c.onBar) { turnBy(1) }
+            if (shown > 0.01f) {
+                if (landscape) {
+                    for (side in intArrayOf(-1, 1)) {
+                        val back = side < 0
+                        Box(
+                            Modifier.align(if (back) Alignment.CenterStart else Alignment.CenterEnd)
+                                .padding(horizontal = 14.dp).graphicsLayer { alpha = shown }
+                                .shadow(6.dp, CircleShape).background(c.bar, CircleShape).padding(3.dp),
+                        ) {
+                            if (back) TurnButton(PIcon.Back, "Previous page", state.current > 0, c.onBar) { turnBy(-1) }
+                            else TurnButton(PIcon.Chevron, "Next page", state.current < last, c.onBar) { turnBy(1) }
+                        }
+                    }
+                } else Row(
+                    Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 12.dp)
+                        .graphicsLayer { alpha = shown; translationY = (1f - shown) * 24f }
+                        .shadow(6.dp, RoundedCornerShape(26.dp)).background(c.bar, RoundedCornerShape(26.dp)).padding(5.dp),
+                ) {
+                    TurnButton(PIcon.Back, "Previous page", state.current > 0, c.onBar) { turnBy(-1) }
+                    TurnButton(PIcon.Chevron, "Next page", state.current < last, c.onBar) { turnBy(1) }
+                }
             }
         }
     }
@@ -297,12 +313,16 @@ private fun Leaf(
     val turning by remember(kind) {
         derivedStateOf { (kind == CURRENT && state.t > 0f) || (kind == PREV && state.t < 0f) }
     }
-    // the picture to bend: normally ready already; if not, painted right here (a few milliseconds), never waited for
-    val shot: Bitmap? = if (!turning) null else {
+    // The picture to bend: normally ready already (painted ahead of time); if not, painted right here, never waited for.
+    // It is fetched when the turn starts and held until the page is still again, so a frame never does more than draw it.
+    val held = remember(index) { arrayOfNulls<Bitmap>(1) }
+    fun obtain(): Bitmap {
         val items = vm.items.toList()
         val key = shotKey(vm, index, items)
-        remember(key) {
-            shots.get(key) ?: paintShot(vm, engine, index, items, renderWidthFor(vm, pw, viewW).coerceAtMost(SHOT_MAX_W), renderWidthFor(vm, pw, viewW)).first.also { shots.put(key, it) }
+        return shots.get(key) ?: renderWidthFor(vm, pw, viewW).let { rw ->
+            val (bmp, ready) = paintShot(vm, engine, index, items, rw.coerceAtMost(SHOT_MAX_W), rw)
+            if (ready) shots.put(key, bmp)          // a picture taken before the page image existed is not kept
+            bmp
         }
     }
 
@@ -330,7 +350,8 @@ private fun Leaf(
                 .size(with(density) { pw.toDp() }, with(density) { ph.toDp() })
                 .drawWithContent {
                     val t = state.t
-                    if (!turning || shot == null) {
+                    if (!turning) {
+                        held[0] = null
                         drawContent()
                         // the page underneath is a little dim while covered and brightens as it is uncovered
                         if (kind == NEXT && t > 0f) {
@@ -339,6 +360,7 @@ private fun Leaf(
                         }
                         return@drawWithContent
                     }
+                    val shot = held[0] ?: obtain().also { held[0] = it }
                     val w = size.width; val h = size.height
                     // p: 0 = page lying flat, 1 = turned over onto the left
                     val p = (if (kind == CURRENT) t else 1f + t).coerceIn(0f, 1f)

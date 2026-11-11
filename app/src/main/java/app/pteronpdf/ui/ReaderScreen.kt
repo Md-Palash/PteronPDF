@@ -55,7 +55,10 @@ private sealed interface TextReq {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ReaderScreen(vm: ReaderViewModel, settings: AppSettings, onClose: () -> Unit, onSettings: () -> Unit) {
+fun ReaderScreen(
+    vm: ReaderViewModel, settings: AppSettings, onClose: () -> Unit, onSettings: () -> Unit,
+    tabsH: androidx.compose.ui.unit.Dp = 0.dp, onChrome: (Boolean) -> Unit = {}, onOpenAnother: () -> Unit = {},
+) {
     val c = LocalPteron.current
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
@@ -79,6 +82,12 @@ fun ReaderScreen(vm: ReaderViewModel, settings: AppSettings, onClose: () -> Unit
     val barVisible = !reading || chromeVisible || editing || searchOpen
 
     LaunchedEffect(reading) { chromeVisible = !reading }
+    // the tab bar (when several PDFs are open) comes and goes with the top bar
+    LaunchedEffect(barVisible) { onChrome(barVisible) }
+
+    // Portrait keeps the tall editing card; in landscape the screen is short, so the card is limited and scrolls
+    val landscape = androidx.compose.ui.platform.LocalConfiguration.current.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+    val panelH = if (landscape) 170.dp else 290.dp
 
     // Keep screen awake (setting), only while reading
     val view = LocalView.current
@@ -89,7 +98,9 @@ fun ReaderScreen(vm: ReaderViewModel, settings: AppSettings, onClose: () -> Unit
 
     // restore last-read page once
     LaunchedEffect(engine) {
-        if (engine != null && vm.initialPage > 0) { book.jump(vm.initialPage); listState.scrollToItem(vm.initialPage) }
+        // the page this PDF was on: the last-read page when first opened, or where it was left when coming back to its tab
+        val p = vm.currentPage
+        if (engine != null && p > 0) { book.jump(p); listState.scrollToItem(p) }
     }
 
     // one place to jump to a page, whichever way of reading is on
@@ -145,11 +156,11 @@ fun ReaderScreen(vm: ReaderViewModel, settings: AppSettings, onClose: () -> Unit
     }
 
     val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
-    val topPad = if (reading) statusTop + 8.dp else statusTop + TopBarHeight + 10.dp
+    val topPad = if (reading) statusTop + 8.dp else statusTop + TopBarHeight + 10.dp + tabsH
     // The list's bottom padding never changes: changing it when the editing card opens would re-layout every page mid-animation.
     // It always leaves room for the card; only the auto-scroll zone for dragged marks follows the card.
-    val bottomPad = 290.dp
-    val edgeBottom = if (editing) 290.dp else 96.dp
+    val bottomPad = panelH
+    val edgeBottom = if (editing) panelH else 96.dp
 
     Box(Modifier.fillMaxSize().background(c.canvas)) {
         when {
@@ -160,7 +171,7 @@ fun ReaderScreen(vm: ReaderViewModel, settings: AppSettings, onClose: () -> Unit
             engine == null -> CircularProgressIndicator(Modifier.align(Alignment.Center), color = c.accent)
             else -> {
                 if (bookMode) BookView(
-                    vm, engine, book, editing, topPad = topPad, panelHeight = 290.dp,
+                    vm, engine, book, editing, topPad = topPad, panelHeight = panelH,
                     onText = { p, pt -> textRequest = TextReq.New(p, pt) },
                     onEditText = { textRequest = TextReq.Edit(it) },
                     onTapEmpty = { if (reading && !editing) chromeVisible = !chromeVisible },
@@ -221,6 +232,7 @@ fun ReaderScreen(vm: ReaderViewModel, settings: AppSettings, onClose: () -> Unit
                                         else book.jump(vm.currentPage)
                                         settings.changeBookMode(!bookMode)
                                     }
+                                    MenuItem(PIcon.Plus, "Open another PDF") { showMenu = false; onOpenAnother() }
                                     MenuItem(PIcon.Grid, "Pages") { showMenu = false; showThumbs = true }
                                     MenuItem(PIcon.Save, "Save", enabled = vm.dirty) { showMenu = false; vm.save() }
                                     MenuItem(PIcon.Copy, "Save a copy…") { showMenu = false; saveAs.launch(vm.name.removeSuffix(".pdf") + " (copy).pdf") }
@@ -255,10 +267,10 @@ fun ReaderScreen(vm: ReaderViewModel, settings: AppSettings, onClose: () -> Unit
             exit = slideOutVertically(tween(210, easing = FastOutSlowInEasing)) { it },
             modifier = Modifier.align(Alignment.BottomCenter),
         ) {
-            EditPanel(vm, onCustomColor = { showColor = true }, onEditText = { textRequest = TextReq.Edit(it) })
+            EditPanel(vm, panelH, onCustomColor = { showColor = true }, onEditText = { textRequest = TextReq.Edit(it) })
         }
 
-        SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = if (editing) 300.dp else 90.dp))
+        SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = if (editing) panelH + 10.dp else 90.dp))
     }
 
     // ── sheets & dialogs ──
@@ -298,7 +310,7 @@ fun ReaderScreen(vm: ReaderViewModel, settings: AppSettings, onClose: () -> Unit
         onDismissRequest = { showUnsaved = false },
         title = { Text("Save your markup?") },
         text = { Text("You have unsaved changes to this PDF.") },
-        confirmButton = { TextButton({ showUnsaved = false; vm.save(); onClose() }) { Text("Save") } },
+        confirmButton = { TextButton({ showUnsaved = false; vm.saveThen { ok -> if (ok) onClose() } }) { Text("Save") } },
         dismissButton = {
             Row {
                 TextButton({ showUnsaved = false }) { Text("Cancel") }
@@ -364,7 +376,7 @@ private val ToolDefs = listOf(
 )
 
 @Composable
-private fun EditPanel(vm: ReaderViewModel, onCustomColor: () -> Unit, onEditText: (Item) -> Unit) {
+private fun EditPanel(vm: ReaderViewModel, maxHeight: androidx.compose.ui.unit.Dp, onCustomColor: () -> Unit, onEditText: (Item) -> Unit) {
     val c = LocalPteron.current
     val shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp, bottomStart = 0.dp, bottomEnd = 0.dp)
     val sel = vm.selected
@@ -380,8 +392,8 @@ private fun EditPanel(vm: ReaderViewModel, onCustomColor: () -> Unit, onEditText
     val swatches = if (isHighlighter) HighlightSwatches else PenSwatches
 
     Column(
-        Modifier.fillMaxWidth().shadow(14.dp, shape).clip(shape).background(c.bar)
-            .navigationBarsPadding().padding(top = 8.dp, bottom = 8.dp)
+        Modifier.fillMaxWidth().heightIn(max = maxHeight).shadow(14.dp, shape).clip(shape).background(c.bar)
+            .navigationBarsPadding().padding(top = 8.dp, bottom = 8.dp).verticalScroll(rememberScrollState())
     ) {
         Box(Modifier.align(Alignment.CenterHorizontally).size(width = 36.dp, height = 4.dp).clip(RoundedCornerShape(2.dp)).background(c.onBar.copy(alpha = 0.22f)))
         Spacer(Modifier.height(8.dp))

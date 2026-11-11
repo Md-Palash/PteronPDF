@@ -38,6 +38,7 @@ import app.pteronpdf.theme.LocalPteron
 import kotlinx.coroutines.launch
 
 const val MAX_ZOOM = 4f
+const val MIN_ZOOM = 0.5f      // pages may be shrunk to half the screen width, centred, to see more of them at once
 
 @Composable
 fun PageList(
@@ -87,7 +88,7 @@ fun PageList(
                             val z = ev.calculateZoom()
                             if (z != 1f) {
                                 pinched = true
-                                val minLive = 1f / vm.zoom
+                                val minLive = MIN_ZOOM / vm.zoom
                                 val maxLive = MAX_ZOOM / vm.zoom
                                 live = (live * z).coerceIn(minLive.coerceAtMost(1f), maxLive.coerceAtLeast(1f))
                                 pivot = ev.calculateCentroid(useCurrent = true)
@@ -97,7 +98,7 @@ fun PageList(
                     } while (ev.changes.any { it.pressed })
                     if (pinched) {
                         val ratio = live
-                        val newZoom = (vm.zoom * ratio).coerceIn(1f, MAX_ZOOM)
+                        val newZoom = (vm.zoom * ratio).coerceIn(MIN_ZOOM, MAX_ZOOM)
                         val r = newZoom / vm.zoom
                         val idx = listState.firstVisibleItemIndex
                         val off = listState.firstVisibleItemScrollOffset
@@ -117,7 +118,7 @@ fun PageList(
             .pointerInput(Unit) {
                 detectTapGestures(
                     onDoubleTap = { o ->
-                        val target = if (vm.zoom > 1.05f) 1f else 2.2f
+                        val target = if (vm.zoom > 1.05f || vm.zoom < 0.95f) 1f else 2.2f
                         val r = target / vm.zoom
                         val idx = listState.firstVisibleItemIndex; val off = listState.firstVisibleItemScrollOffset; val hx = hScroll.value
                         vm.zoom = target
@@ -141,7 +142,7 @@ fun PageList(
                     .horizontalScroll(hScroll)
             ) {
                 LazyColumn(
-                    Modifier.width(with(density) { (pageW + 2 * gutterPx).toDp() }).fillMaxHeight(),
+                    Modifier.width(with(density) { maxOf(pageW + 2 * gutterPx, viewW.toFloat()).toDp() }).fillMaxHeight(),
                     state = listState,
                     contentPadding = PaddingValues(top = topPad, bottom = bottomPad),
                     verticalArrangement = Arrangement.spacedBy(14.dp),

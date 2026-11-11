@@ -27,7 +27,7 @@ import app.pteronpdf.theme.LocalPteron
 @Composable
 fun FixedTopBar(content: @Composable RowScope.() -> Unit) {
     val c = LocalPteron.current
-    Column(Modifier.fillMaxWidth().background(c.bar).statusBarsPadding()) {
+    Column(Modifier.fillMaxWidth().background(c.bar).statusBarsPadding().windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal))) {
         Row(Modifier.fillMaxWidth().height(TopBarHeight).padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically, content = content)
         Box(Modifier.fillMaxWidth().height(1.dp).background(c.divider))
     }
